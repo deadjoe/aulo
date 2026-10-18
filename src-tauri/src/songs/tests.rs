@@ -292,7 +292,7 @@ fn flac_export_copies_the_original_and_replaces_only_when_done() {
     fs::write(&source, b"original").unwrap();
     let destination = dir.path().join("Song.flac");
     fs::write(&destination, b"old").unwrap();
-    export_audio(dir.path(), &source, AudioFormat::Flac, &destination).unwrap();
+    export_audio(&source, AudioFormat::Flac, &destination).unwrap();
     assert_eq!(fs::read(&destination).unwrap(), b"original");
     let leftovers = fs::read_dir(dir.path())
         .unwrap()
@@ -314,28 +314,30 @@ fn failed_conversions_leave_the_destination_untouched() {
     fs::write(&source, b"not audio").unwrap();
     let destination = dir.path().join("Song.mp3");
     fs::write(&destination, b"keep").unwrap();
-    // No runtime interpreter exists under this base, so the converter cannot start.
-    assert!(export_audio(dir.path(), &source, AudioFormat::Mp3, &destination).is_err());
+    assert!(export_audio(&source, AudioFormat::Mp3, &destination).is_err());
     assert_eq!(fs::read(&destination).unwrap(), b"keep");
 }
 
 #[cfg(target_os = "macos")]
 #[test]
-#[ignore = "Converts a real song with the development runtime and macOS encoders"]
+#[ignore = "Converts a real song produced by the music engine"]
 fn live_exports_every_format() {
-    let base = PathBuf::from(std::env::var_os("AULO_DEV_BASE").expect("Set AULO_DEV_BASE"));
     let source = PathBuf::from(std::env::var_os("AULO_DEV_FLAC").expect("Set AULO_DEV_FLAC"));
     let dir = tempfile::tempdir().unwrap();
+    let dir = std::env::var_os("AULO_DEV_EXPORT_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| dir.path().to_path_buf());
     for format in [
         AudioFormat::M4a,
         AudioFormat::Mp3,
         AudioFormat::Wav,
         AudioFormat::Flac,
     ] {
-        let destination = dir.path().join(format!("Song.{}", format.extension()));
-        export_audio(&base, &source, format, &destination).unwrap();
+        let destination = dir.join(format!("Song.{}", format.extension()));
+        let started = std::time::Instant::now();
+        export_audio(&source, format, &destination).unwrap();
         let size = fs::metadata(&destination).unwrap().len();
-        eprintln!("{format:?}: {size} bytes");
+        eprintln!("{format:?}: {size} bytes in {:?}", started.elapsed());
         assert!(size > 100_000);
     }
 }
