@@ -155,12 +155,11 @@ pub fn report_text(facts: &ReportFacts) -> String {
 pub async fn save_report(
     app: tauri::AppHandle,
     service: tauri::State<'_, SongService>,
-    destination: String,
-) -> Result<(), String> {
-    let destination = std::path::PathBuf::from(destination);
-    if !destination.is_absolute() {
-        return Err("Choose where to save the report.".into());
-    }
+) -> Result<bool, String> {
+    let Some(destination) = crate::songs::choose_save_path(&app, "Aulo problem report.txt", "txt")
+    else {
+        return Ok(false);
+    };
     let base = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let works = service.inner().works(&app)?;
     let engine = crate::engine::engine_status(app.clone()).await?;
@@ -205,6 +204,7 @@ pub async fn save_report(
             ),
         };
         fs::write(&destination, report_text(&facts))
+            .map(|_| true)
             .map_err(|_| "The report couldn’t be saved there. Choose another folder.".to_string())
     })
     .await

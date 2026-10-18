@@ -553,9 +553,11 @@ impl SongService {
             };
             let Some(id) = next else {
                 // Idle: give the model's memory back to the computer.
+                // Forget it only once it has really exited: whoever waits for the
+                // engine to go (removing the models) relies on that.
                 if let Some(process) = engine.take() {
-                    self.forget_engine();
                     process.shutdown(Duration::from_secs(10));
+                    self.forget_engine();
                 }
                 continue;
             };
@@ -649,20 +651,20 @@ impl SongService {
                 }
                 Ok(Output::Event(_)) => continue,
                 Ok(Output::Closed) => {
-                    self.forget_engine();
                     if let Some(old) = engine.take() {
                         old.kill();
                     }
+                    self.forget_engine();
                     return Err(
                         "The music engine stopped unexpectedly. Try creating this song again."
                             .into(),
                     );
                 }
                 Err(_) => {
-                    self.forget_engine();
                     if let Some(old) = engine.take() {
                         old.kill();
                     }
+                    self.forget_engine();
                     return Err(
                         "The music engine stopped responding. Try creating this song again.".into(),
                     );
@@ -860,17 +862,21 @@ impl SongService {
     }
 }
 
-/// Settings › Free up memory now: unload the engine if no song is being made.
+/// Settings › Free up memory now: unload the engine if no song is being made, and
+/// answer only once it has exited and its memory is really back.
 #[tauri::command]
-pub fn release_engine(service: tauri::State<SongService>) -> Result<(), String> {
-    let mut state = service.0 .0.lock().unwrap();
-    if state.current.is_some() || !state.queue.is_empty() {
-        return Err("Aulo is making a song. Memory is freed after it finishes.".into());
-    }
-    state.release = true;
-    drop(state);
-    service.0 .1.notify_all();
-    Ok(())
+pub async fn release_engine(service: tauri::State<'_, SongService>) -> Result<(), String> {
+    let service = service.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || service.unload_engine())
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| {
+            if e.starts_with("Stop the songs") {
+                "Aulo is making a song. Memory is freed after it finishes.".into()
+            } else {
+                e
+            }
+        })
 }
 
 #[tauri::command]
@@ -884,6 +890,9 @@ pub fn create_song(
     let workspace = workspace.unwrap_or_else(default_workspace);
     if !service.with_state(&app, |state| state.collections.has_workspace(&workspace))? {
         return Err("That workspace no longer exists.".into());
+    }
+    if let Some(reason) = crate::creation_hardware_blocker() {
+        return Err(reason.into());
     }
     if app.state::<engine::EngineCache>().ready().is_none()
         || models::verified_root(&app, &app.state::<models::ModelManager>()).is_none()
@@ -1084,26 +1093,57 @@ pub async fn export_song(
     service: tauri::State<'_, SongService>,
     id: String,
     format: AudioFormat,
-    destination: String,
-) -> Result<(), String> {
+    name: String,
+) -> Result<bool, String> {
     let source = finished_audio(&app, &service, &id)?;
-    let destination = PathBuf::from(destination);
-    if !destination.is_absolute()
-        || destination
-            .extension()
-            .is_none_or(|e| !e.eq_ignore_ascii_case(format.extension()))
-    {
-        return Err(format!(
-            "Choose a file name ending in .{}.",
-            format.extension()
-        ));
-    }
+    let extension = format.extension();
+    // The person picks the place in the system's own save window, opened here, so the
+    // interface can never name a file for Aulo to write. False means they cancelled.
+    let Some(destination) =
+        choose_save_path(&app, &crate::share::file_name(&name, extension), extension)
+    else {
+        return Ok(false);
+    };
     tauri::async_runtime::spawn_blocking(move || export_audio(&source, format, &destination))
         .await
         .map_err(|e| e.to_string())?
         .map_err(|_| {
-            "The song could not be saved in that format. Try another format or folder.".into()
-        })
+            "The song could not be saved in that format. Try another format or folder.".to_string()
+        })?;
+    Ok(true)
+}
+
+/// Ask where to save a file with the system's save window. The chosen name always ends
+/// in `extension`; None when the person cancels.
+pub(crate) fn choose_save_path(
+    app: &tauri::AppHandle,
+    file_name: &str,
+    extension: &str,
+) -> Option<PathBuf> {
+    use tauri_plugin_dialog::DialogExt;
+    let chosen = app
+        .dialog()
+        .file()
+        .set_file_name(file_name)
+        .add_filter(extension.to_uppercase(), &[extension])
+        .blocking_save_file()?
+        .into_path()
+        .ok()?;
+    Some(with_extension(chosen, extension))
+}
+
+/// `path` ending in `.extension`, keeping a name that already does.
+fn with_extension(path: PathBuf, extension: &str) -> PathBuf {
+    if path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case(extension))
+    {
+        return path;
+    }
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(".");
+    name.push(extension);
+    path.with_file_name(name)
 }
 
 #[tauri::command]
@@ -1166,11 +1206,8 @@ pub fn delete_songs(
     if ids.iter().any(|id| !valid_id(id)) {
         return Err("Unknown song.".into());
     }
-    let deleted = delete_trashed(&app, &service, &ids)?;
-    if deleted.len() < ids.len() {
-        return Err("Some songs could not be deleted.".into());
-    }
-    Ok(deleted)
+    // The songs that went, even if some could not: the interface shows exactly those.
+    delete_trashed(&app, &service, &ids)
 }
 
 /// Send songs that are in Aulo's Trash to the computer's trash, and forget them.

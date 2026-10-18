@@ -34,7 +34,7 @@ vi.mock("./lib/songs", async (importOriginal) => {
     addToPlaylist: vi.fn().mockResolvedValue(1),
     createWorkspace: vi.fn(),
     createPlaylist: vi.fn(),
-    exportSong: vi.fn().mockResolvedValue(undefined),
+    exportSong: vi.fn().mockResolvedValue(true),
     revealSong: vi.fn().mockResolvedValue(undefined),
     shareSong: vi.fn().mockResolvedValue(undefined),
     audioUrl: vi.fn(() => "blob:audio"),
@@ -292,7 +292,7 @@ describe("library", () => {
     expect(songs.exportSong).toHaveBeenCalledWith(
       "0123456789abcdef0123456789abcdef",
       "wav",
-      "/Users/me/Music/Sunday.wav",
+      "Sunday",
     );
     expect(await screen.findByText("Downloaded.")).toBeVisible();
     expect(localStorage.getItem("aulo.download-format.v1")).toBe("wav");
@@ -440,6 +440,48 @@ describe("library", () => {
     expect(songs.deleteSongs).toHaveBeenCalledWith([
       "fedcba9876543210fedcba9876543210",
     ]);
+  });
+
+  it("says exactly what was restored or deleted when something fails", async () => {
+    vi.mocked(songs.listSongs).mockResolvedValue([
+      song({
+        trashedMs: Date.now() - 60_000,
+        request: { ...song().request, title: "Kept" },
+      }),
+      song({
+        id: "fedcba9876543210fedcba9876543210",
+        trashedMs: Date.now() - 60_000,
+        request: { ...song().request, title: "Gone" },
+      }),
+    ]);
+    vi.mocked(songs.trashSongs).mockResolvedValueOnce([]);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: /^Library/ }));
+    await user.click(screen.getByRole("button", { name: /Trash \(2\)/ }));
+    await user.click(screen.getByRole("button", { name: "Restore all" }));
+    expect(
+      await screen.findByText("These songs couldn’t be restored. Try again."),
+    ).toBeVisible();
+    expect(screen.queryByText(/^Restored/)).toBeNull();
+
+    vi.mocked(songs.deleteSongs).mockResolvedValueOnce([
+      "fedcba9876543210fedcba9876543210",
+    ]);
+    await user.click(screen.getByRole("button", { name: "Empty Trash" }));
+    await user.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Delete",
+      }),
+    );
+    expect(
+      await screen.findByText(
+        "Deleted “Gone”. 1 song couldn’t be deleted; try again.",
+      ),
+    ).toBeVisible();
+    // The song that could not be deleted is still in the Trash.
+    expect(screen.getByText("Kept")).toBeVisible();
+    expect(screen.queryByText("Gone")).toBeNull();
   });
 
   it("asks before deleting a workspace and keeps its songs", async () => {

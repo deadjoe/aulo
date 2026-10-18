@@ -24,15 +24,12 @@ vi.mock("../lib/settings", async (importOriginal) => ({
   storageUsage: vi.fn(),
   engineMemory: vi.fn(),
   releaseEngine: vi.fn().mockResolvedValue(undefined),
-  saveReport: vi.fn().mockResolvedValue(undefined),
+  saveReport: vi.fn().mockResolvedValue(true),
 }));
 vi.mock("../lib/songs", async (importOriginal) => ({
   ...(await importOriginal<typeof songs>()),
   appVersion: vi.fn().mockResolvedValue("0.2.0"),
   deleteSongs: vi.fn((ids: string[]) => Promise.resolve(ids)),
-}));
-vi.mock("@tauri-apps/plugin-dialog", () => ({
-  save: vi.fn().mockResolvedValue("/Users/me/Desktop/Aulo problem report.txt"),
 }));
 
 const defaults = settingsApi.DEFAULT_SETTINGS;
@@ -162,6 +159,24 @@ describe("Settings › Storage", () => {
     expect(props.onDeleted).toHaveBeenCalledWith(["b", "c"]);
   });
 
+  it("removes only the songs that were really deleted", async () => {
+    vi.mocked(songs.deleteSongs).mockResolvedValueOnce(["b"]);
+    const user = userEvent.setup();
+    const props = open("storage");
+    await user.click(
+      await screen.findByRole("button", { name: "Empty Trash" }),
+    );
+    await user.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Empty Trash",
+      }),
+    );
+    expect(props.onDeleted).toHaveBeenCalledWith(["b"]);
+    expect(props.notify).toHaveBeenCalledWith(
+      "1 song couldn’t be deleted. Try again.",
+    );
+  });
+
   it("turns on emptying the Trash after 30 days", async () => {
     const user = userEvent.setup();
     open("storage");
@@ -223,9 +238,13 @@ describe("Settings › Help & About", () => {
       screen.getByText(/no songs, lyrics, styles or titles/),
     ).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Save report…" }));
-    expect(settingsApi.saveReport).toHaveBeenCalledWith(
-      "/Users/me/Desktop/Aulo problem report.txt",
-    );
+    expect(settingsApi.saveReport).toHaveBeenCalledOnce();
     expect(props.notify).toHaveBeenCalledWith("Problem report saved.");
+    // Cancelling the save window says nothing.
+    vi.mocked(settingsApi.saveReport).mockResolvedValueOnce(false);
+    props.notify.mockClear();
+    await user.click(screen.getByRole("button", { name: "Save report…" }));
+    expect(settingsApi.saveReport).toHaveBeenCalledTimes(2);
+    expect(props.notify).not.toHaveBeenCalled();
   });
 });

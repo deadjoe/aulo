@@ -40,8 +40,8 @@ export const updateSettings = (settings: Settings) =>
 export const storageUsage = () => invoke<StorageUsage>("storage_usage");
 export const engineMemory = () => invoke<EngineMemory>("engine_memory");
 export const releaseEngine = () => invoke<void>("release_engine");
-export const saveReport = (destination: string) =>
-  invoke<void>("save_report", { destination });
+/** Aulo opens the save window; false when it was cancelled. */
+export const saveReport = () => invoke<boolean>("save_report");
 
 /** Songs Aulo deleted by itself (Trash emptied after the chosen days). */
 export function onSongsRemoved(handler: (ids: string[]) => void) {
