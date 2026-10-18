@@ -873,6 +873,16 @@ pub fn reveal_song(
         .map_err(|_| "The song's folder could not be opened.".into())
 }
 
+#[tauri::command]
+pub fn reveal_library(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let root = library_root(&app)?;
+    fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+    app.opener()
+        .open_path(root.to_string_lossy(), None::<&str>)
+        .map_err(|_| "The songs folder could not be opened.".into())
+}
+
 /// Move a song to the computer's trash, so it can still be restored from there.
 #[tauri::command]
 pub fn trash_song(

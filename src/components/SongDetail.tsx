@@ -167,7 +167,24 @@ export default function SongDetail({
           <h2>Lyrics</h2>
           {lyrics && <CopyButton text={lyrics} label="Copy lyrics" />}
         </header>
-        <pre>{lyrics || "This song is an instrumental."}</pre>
+        {lyrics ? (
+          <div className="lyrics">
+            {lyrics.split("\n").map((line, i) => {
+              const section = /^\s*\[(.+)\]\s*$/.exec(line)?.[1];
+              return section ? (
+                <span key={i} className="lyrics-section">
+                  {section}
+                </span>
+              ) : (
+                <span key={i} className={line.trim() ? "" : "lyrics-gap"}>
+                  {line}
+                </span>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="lyrics-empty">This song is an instrumental.</p>
+        )}
       </section>
     </main>
   );

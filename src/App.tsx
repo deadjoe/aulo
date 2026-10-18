@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
 import {
-  ArrowRight,
   Check,
   CircleHelp,
   Library,
@@ -12,7 +11,7 @@ import {
 import SetupWizard from "./components/SetupWizard";
 import Dialog from "./components/Dialog";
 import PreparationBadge from "./components/PreparationBadge";
-import EngineStatus from "./components/EngineStatus";
+import SettingsDialog from "./components/SettingsDialog";
 import Composer from "./components/Composer";
 import SongList from "./components/SongList";
 import SongDetail from "./components/SongDetail";
@@ -20,7 +19,7 @@ import type { SongActions } from "./components/SongMenu";
 import DownloadDialog from "./components/DownloadDialog";
 import Player, { usePlayer } from "./components/Player";
 import { Brand } from "./components/Brand";
-import { loadComposer, saveComposer } from "./lib/composer";
+import { EMPTY_REQUEST, loadComposer, saveComposer } from "./lib/composer";
 import {
   cancelSong,
   createSong,
@@ -59,6 +58,12 @@ export default function App() {
   const [status, setStatus] = useState<CreationStatus | null>(null);
   const [creating, setCreating] = useState(false);
   const [message, setMessage] = useState("");
+  // An optional way to take back the action the message describes.
+  const [undo, setUndo] = useState<(() => void) | null>(null);
+  const notify = (text: string, undoAction: (() => void) | null = null) => {
+    setMessage(text);
+    setUndo(() => undoAction);
+  };
   const [openId, setOpenId] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [downloading, setDownloading] = useState<Song | null>(null);
@@ -67,10 +72,13 @@ export default function App() {
 
   // Messages confirm or explain; they leave on their own.
   useEffect(() => {
-    if (!message) return;
-    const timer = window.setTimeout(() => setMessage(""), 4500);
+    if (!message) {
+      setUndo(null);
+      return;
+    }
+    const timer = window.setTimeout(() => setMessage(""), undo ? 6000 : 4500);
     return () => window.clearTimeout(timer);
-  }, [message]);
+  }, [message, undo]);
 
   const refreshStatus = useCallback(() => {
     creationStatus().then(setStatus, () =>
@@ -87,7 +95,7 @@ export default function App() {
     if (!explored) return;
     refreshStatus();
     listSongs().then(setSongs, () =>
-      setMessage("Your songs could not be loaded. Reopen Aulo to try again."),
+      notify("Your songs could not be loaded. Reopen Aulo to try again."),
     );
     const stop = onSongUpdated((song) =>
       setSongs((list) => {
@@ -134,7 +142,7 @@ export default function App() {
       await start(request);
       setOpenId(null);
     } catch (error) {
-      setMessage(problem(error, "This song could not be started."));
+      notify(problem(error, "This song could not be started."));
       refreshStatus();
     } finally {
       await settle;
@@ -142,7 +150,7 @@ export default function App() {
     }
   }
   const act = (action: Promise<void>, fallback: string) =>
-    action.catch((error: unknown) => setMessage(problem(error, fallback)));
+    action.catch((error: unknown) => notify(problem(error, fallback)));
 
   if (!explored)
     return <SetupWizard onExplore={explore} initialStep={setupStep} />;
@@ -150,9 +158,9 @@ export default function App() {
   const actions: SongActions = {
     onAnotherVersion: (song) =>
       void start({ ...song.request }).then(
-        () => setMessage("A new version is on its way."),
+        () => notify("A new version is on its way."),
         (error: unknown) =>
-          setMessage(problem(error, "A new version could not be started.")),
+          notify(problem(error, "A new version could not be started.")),
       ),
     onReuse: (song) => {
       setRequest(song.request);
@@ -165,19 +173,17 @@ export default function App() {
       void act(revealSong(song.id), "The song's folder could not be opened."),
     onQueue: (song) => {
       player.enqueue(song);
-      setMessage(`“${displayTitle(song.request)}” plays next.`);
+      notify(`“${displayTitle(song.request)}” plays next.`);
     },
     onTrash: (song) =>
       void trashSong(song.id).then(
         () => {
           setSongs((list) => list.filter((s) => s.id !== song.id));
           if (openId === song.id) setOpenId(null);
-          setMessage("Moved to the Trash.");
+          notify("Moved to the Trash.");
         },
         (error: unknown) =>
-          setMessage(
-            problem(error, "This song could not be moved to the Trash."),
-          ),
+          notify(problem(error, "This song could not be moved to the Trash.")),
       ),
   };
   const renamed = (song: Song, title: string | null) => {
@@ -210,7 +216,7 @@ export default function App() {
       }
       onRetry={(song) =>
         void start({ ...song.request }).catch((error: unknown) =>
-          setMessage(problem(error, "This song could not be started.")),
+          notify(problem(error, "This song could not be started.")),
         )
       }
       actions={actions}
@@ -287,6 +293,11 @@ export default function App() {
               creating={creating}
               onCreate={() => void create()}
               onOpenSetup={openSetup}
+              onClear={() => {
+                const previous = request;
+                setRequest(EMPTY_REQUEST);
+                notify("Cleared.", () => setRequest(previous));
+              }}
             />
           )
         )}
@@ -301,6 +312,17 @@ export default function App() {
         <div className="toast" role="status">
           <Check size={17} />
           <span>{message}</span>
+          {undo && (
+            <button
+              className="toast-action"
+              onClick={() => {
+                undo();
+                setMessage("");
+              }}
+            >
+              Undo
+            </button>
+          )}
           <button
             className="icon-button"
             aria-label="Dismiss message"
@@ -316,58 +338,43 @@ export default function App() {
           onClose={() => setDownloading(null)}
           onDone={(text) => {
             setDownloading(null);
-            setMessage(text);
+            notify(text);
           }}
         />
       )}
-      {(modal?.kind === "settings" || modal?.kind === "agent") && (
+      {modal?.kind === "settings" && (
+        <SettingsDialog
+          onClose={() => setModal(null)}
+          onOpenSetup={openSetup}
+          onError={(text) => notify(text)}
+        />
+      )}
+      {modal?.kind === "agent" && (
         <Dialog onClose={() => setModal(null)}>
           <header>
             <span className="section-icon">
-              {modal.kind === "agent" ? <Link2 /> : <Settings2 />}
+              <Link2 size={21} />
             </span>
             <button
               className="icon-button"
-              aria-label="Close dialog"
+              aria-label="Close"
               onClick={() => setModal(null)}
             >
-              <X />
+              <X size={18} />
             </button>
           </header>
-          <h2 id="modal-title">
-            {modal.kind === "agent"
-              ? "Your assistant, your music."
-              : "Settings"}
-          </h2>
+          <h2 id="modal-title">Bring your AI assistant</h2>
           <p>
-            {modal.kind === "agent"
-              ? "Connect an AI agent you already use to help shape ideas and work with your music. This independent integration is planned for a later release."
-              : "Your songs are saved on this computer, in Aulo's own data folder. Nothing is uploaded."}
+            Soon you’ll be able to connect an AI assistant you already use, so
+            it can help write lyrics and shape songs with you in Aulo.
           </p>
-          {modal.kind === "settings" && <EngineStatus />}
-          {modal.kind === "agent" && (
-            <div className="notice">
-              <CircleHelp size={17} />
-              <p>
-                No agent is connected. Aulo does not read agent settings or send
-                your lyrics anywhere.
-              </p>
-            </div>
-          )}
-          {modal.kind === "settings" && (
-            <button
-              className="primary"
-              onClick={() => {
-                setModal(null);
-                openSetup();
-              }}
-            >
-              Open setup guide <ArrowRight size={16} />
-            </button>
-          )}
-          <button className="text-button" onClick={() => setModal(null)}>
-            Back to my workspace
-          </button>
+          <div className="notice">
+            <CircleHelp size={17} />
+            <p>
+              Nothing is connected yet, and Aulo doesn’t send your lyrics
+              anywhere.
+            </p>
+          </div>
         </Dialog>
       )}
     </div>

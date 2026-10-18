@@ -54,8 +54,10 @@ describe("native model preparation", () => {
       name: "Download music models",
     });
     expect(download).toBeDisabled();
-    expect(screen.getByText("7.79 GB total")).toBeVisible();
-    await user.click(screen.getByRole("link", { name: /model license/ }));
+    expect(screen.getByText("7.79 GB")).toBeVisible();
+    await user.click(
+      screen.getByRole("link", { name: /CC BY-NC 4.0 license/ }),
+    );
     expect(models.openModelLicense).toHaveBeenCalledOnce();
     await user.click(screen.getByRole("checkbox"));
     await user.click(download);
@@ -92,10 +94,10 @@ describe("native model preparation", () => {
       modelRoot: "/existing/models",
     });
     await user.click(
-      screen.getByRole("button", { name: /Already have the models/ }),
+      screen.getByRole("button", { name: /Already have the music models/ }),
     );
     expect(models.verifyModels).toHaveBeenCalledWith("/existing/models");
-    expect(await screen.findByText("Verified")).toBeVisible();
+    expect(await screen.findByText("Ready")).toBeVisible();
     expect(
       screen.getByText(/Open the desktop app to check the music engine/),
     ).toBeVisible();
@@ -111,7 +113,7 @@ describe("native model preparation", () => {
     const user = userEvent.setup();
     render(<ModelsPanel />);
     await user.click(
-      await screen.findByRole("button", { name: "Verify saved folder" }),
+      await screen.findByRole("button", { name: "Check the music models" }),
     );
     expect(models.verifyModels).toHaveBeenCalledWith("/existing/models");
     expect(models.downloadModels).not.toHaveBeenCalled();
@@ -126,7 +128,7 @@ describe("native model preparation", () => {
     const user = userEvent.setup();
     render(<ModelsPanel />);
     const pause = await screen.findByRole("button", {
-      name: "Pause preparation",
+      name: "Pause",
     });
     vi.mocked(models.getModelStatus).mockResolvedValue({
       ...initial,
@@ -147,13 +149,13 @@ describe("native model preparation", () => {
     const user = userEvent.setup();
     render(<ModelsPanel />);
     await user.click(
-      screen.getByRole("button", { name: /Already have the models/ }),
+      screen.getByRole("button", { name: /Already have the music models/ }),
     );
     await waitFor(() =>
       expect(screen.getByRole("alert")).toHaveTextContent(
         "The folder is unavailable.",
       ),
     );
-    expect(screen.queryByText("Verified")).not.toBeInTheDocument();
+    expect(screen.queryByText("Ready")).not.toBeInTheDocument();
   });
 });

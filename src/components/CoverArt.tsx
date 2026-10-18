@@ -61,7 +61,6 @@ export default function CoverArt({
       aria-hidden="true"
     >
       <span className="cover-light" />
-      <span className="cover-grooves" />
     </span>
   );
 }
