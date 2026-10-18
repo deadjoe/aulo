@@ -1053,7 +1053,12 @@ fn run_converter(mut command: Command, limit: Duration) -> Result<(), String> {
 }
 
 /// Write `source` to `destination` in `format`, replacing it only once complete.
-pub fn export_audio(source: &Path, format: AudioFormat, destination: &Path) -> Result<(), String> {
+pub fn export_audio(
+    source: &Path,
+    format: AudioFormat,
+    destination: &Path,
+    tags: &crate::audio::Tags,
+) -> Result<(), String> {
     let parent = destination.parent().ok_or("Choose a folder to save in.")?;
     let staged = tempfile::Builder::new()
         .prefix(".aulo-")
@@ -1085,6 +1090,11 @@ pub fn export_audio(source: &Path, format: AudioFormat, destination: &Path) -> R
     if fs::metadata(staged.path()).map_or(0, |m| m.len()) == 0 {
         return Err("conversion produced no audio".into());
     }
+    // Title and cover are a courtesy; the audio is saved even if they can't be written.
+    // WAV has no artwork music apps agree on, so it stays plain.
+    if format != AudioFormat::Wav {
+        let _ = crate::audio::write_tags(staged.path(), tags);
+    }
     staged
         .persist(destination)
         .map_err(|e| e.error.to_string())?;
@@ -1099,6 +1109,7 @@ pub async fn export_song(
     id: String,
     format: AudioFormat,
     name: String,
+    cover: Option<Vec<u8>>,
 ) -> Result<bool, String> {
     let source = finished_audio(&app, &service, &id)?;
     let extension = format.extension();
@@ -1109,12 +1120,18 @@ pub async fn export_song(
     else {
         return Ok(false);
     };
-    tauri::async_runtime::spawn_blocking(move || export_audio(&source, format, &destination))
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|_| {
-            "The song could not be saved in that format. Try another format or folder.".to_string()
-        })?;
+    let tags = crate::audio::Tags {
+        title: name,
+        cover: cover.filter(|png| crate::audio::valid_cover(png)),
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        export_audio(&source, format, &destination, &tags)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|_| {
+        "The song could not be saved in that format. Try another format or folder.".to_string()
+    })?;
     Ok(true)
 }
 

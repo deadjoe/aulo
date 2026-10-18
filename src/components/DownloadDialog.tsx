@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Check, LoaderCircle, X } from "lucide-react";
 import Dialog from "./Dialog";
+import { coverPng } from "../lib/cover";
 import {
   displayTitle,
   exportSong,
@@ -66,7 +67,12 @@ export default function DownloadDialog({
     setSaving(true);
     try {
       // Aulo opens the save window itself; false means it was cancelled.
-      if (await exportSong(song.id, format, title)) onDone("Downloaded.");
+      // The cover goes into the file; the song still saves if it can't be drawn.
+      const cover = await coverPng(song.id, song.request.style).catch(
+        () => null,
+      );
+      if (await exportSong(song.id, format, title, cover))
+        onDone("Downloaded.");
       else setSaving(false);
     } catch (e) {
       setError(
