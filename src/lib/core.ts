@@ -1,5 +1,28 @@
 // The UI depends on this boundary, not on Gradio routes or engine internals.
-// Implement with a versioned local service backed by YUE2 // GROOVE.
+// Generation remains gated while the private runtime is being integrated.
+import { invoke, isTauri } from "@tauri-apps/api/core";
+
+export interface EngineStatus {
+  state: "not_installed" | "unavailable" | "detected";
+  message: string;
+  generationReady: false;
+  engineVersion: string | null;
+  device: string | null;
+}
+
+export async function inspectEngine(): Promise<EngineStatus> {
+  if (!isTauri()) {
+    return {
+      state: "unavailable",
+      message: "Open the desktop app to check the music engine.",
+      generationReady: false,
+      engineVersion: null,
+      device: null,
+    };
+  }
+  return invoke<EngineStatus>("engine_status");
+}
+
 export interface CoreCapabilities {
   protocolVersion: 1;
   engineVersion: string;

@@ -6,7 +6,8 @@
 React interface
   Setup guide / composer / draft library / settings
         |
-        +-- Tauri commands: hardware inspection / model preparation
+        +-- Tauri commands: hardware inspection / model preparation / engine probe
+        |       +-- Private Python bridge -- installed GROOVE adapter
         +-- Native dialog: user-selected folder
         +-- Local draft storage (preview only)
 
@@ -19,7 +20,7 @@ Future integration boundary
                               YuE2 / GGUF
 ```
 
-`src/lib/core.ts` defines an initial application-facing contract. There is no service implementation or fabricated generation result. The unavailable runtime is explicitly represented.
+`src/lib/core.ts` defines the application-facing contract and native engine inspection. The private process bridge now checks a real installed engine and provides a developer generation path through the existing adapter. Desktop generation remains unavailable; the job service and runtime distribution are not implemented. See [engine integration](ENGINE.md).
 
 `src/lib/hardware.ts` separates native observations from provisional eligibility. Native inspection performs no downloads, model loading, or environment modification. On Windows, `nvidia-smi` has a five-second timeout; memory from multiple devices is never summed. Failure to detect a GPU means unknown rather than a CPU fallback.
 
@@ -35,7 +36,7 @@ The model manifest targets the existing core version but does not prove packaged
 
 ## Core integration
 
-Extract a UI-independent service boundary in YUE2 // GROOVE through small compatible changes. Its existing runtime currently includes Gradio-facing errors and process-global task state. Aulo must not depend on Gradio routes or duplicate inference logic.
+Use the existing UI-independent `yue2_groove.adapter` through Aulo's thin process bridge. The Gradio runtime includes UI-facing errors and process-global task state and is not imported. No GROOVE changes are required for the initial adapter path. Aulo must not depend on Gradio routes or duplicate inference logic.
 
 The future service owns model lifetime, a single GPU job queue, cancellation, progress, and artifact persistence. UI and agent clients share that service so they cannot independently load duplicate models or bypass the queue. Long operations return job identifiers; clients inspect events/status without holding a single blocking tool call open.
 

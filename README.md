@@ -16,10 +16,12 @@ Implemented:
 - Read-only verification of an existing folder containing `YuE2-3B/` and `YuE2-Vae/`; successful locations are saved for reuse.
 - Restart recovery that preserves partial downloads but requires model revalidation.
 - A workspace status badge for background model preparation.
+- A private engine bridge with offline version/accelerator inspection and a native Settings status check.
+- A developer-only generation path that delegates to the installed GROOVE adapter; desktop generation remains gated.
 - A creative workspace with locally saved drafts, search, favorites, variations, JSON export, and optional details.
 - An independent placeholder for connecting the user's existing AI agent.
 
-Not implemented: packaged inference runtime, audio generation/playback, cover/edit integration, agent connection, signed installers, or automatic updates. Windows hardware behavior is implemented but still requires physical-device validation. Eligibility recommendations are not runtime compatibility guarantees.
+Not implemented: packaged inference runtime, desktop generation/playback, cover/edit integration, agent connection, signed installers, or automatic updates. Windows hardware behavior is implemented but still requires physical-device validation. Eligibility recommendations are not runtime compatibility guarantees. See the [engine integration boundary](docs/ENGINE.md) for development-only capabilities and remaining gates.
 
 ## Development
 

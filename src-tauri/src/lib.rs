@@ -1,3 +1,4 @@
+mod engine;
 mod models;
 use serde::Serialize;
 use sysinfo::{Disks, System};
@@ -115,6 +116,7 @@ pub fn run() {
         .manage(models::ModelManager::default())
         .invoke_handler(tauri::generate_handler![
             inspect_hardware,
+            engine::engine_status,
             models::model_plan,
             models::model_status,
             models::download_models,

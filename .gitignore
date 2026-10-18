@@ -8,3 +8,6 @@ dist/
 src-tauri/target/
 src-tauri/gen/
 *.tsbuildinfo
+__pycache__/
+*.py[cod]
+/artifacts/

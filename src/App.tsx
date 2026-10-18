@@ -24,6 +24,7 @@ import {
 import SetupWizard from "./components/SetupWizard";
 import Dialog from "./components/Dialog";
 import PreparationBadge from "./components/PreparationBadge";
+import EngineStatus from "./components/EngineStatus";
 import { Brand } from "./components/Brand";
 import { loadDrafts, saveDrafts, type Draft } from "./lib/storage";
 import { runtimeStatus } from "./lib/core";
@@ -525,8 +526,9 @@ export default function App() {
           <p>
             {modal === "agent"
               ? "Connect an AI agent you already use to help shape ideas and work with your music. This independent integration is planned for a later release."
-              : "Aulo is an early desktop preview. Drafts are stored locally in this app profile; they are not backed up automatically. The music engine is not installed yet. Open the setup guide to prepare or verify music models."}
+              : "Aulo is an early desktop preview. Drafts are stored locally in this app profile; they are not backed up automatically. Open the setup guide to prepare or verify music models."}
           </p>
+          {modal === "settings" && <EngineStatus />}
           <div className="notice">
             <CircleHelp size={17} />
             <p>

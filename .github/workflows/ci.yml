@@ -33,6 +33,10 @@ jobs:
           node-version: 24
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m unittest discover -s runtime/tests -v
       - run: npm ci
       - run: npm run build
       - run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
