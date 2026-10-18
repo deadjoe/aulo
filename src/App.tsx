@@ -17,7 +17,7 @@ import Composer from "./components/Composer";
 import SongList from "./components/SongList";
 import SongDetail from "./components/SongDetail";
 import type { SongActions } from "./components/SongMenu";
-import { save } from "@tauri-apps/plugin-dialog";
+import DownloadDialog from "./components/DownloadDialog";
 import Player, { usePlayer } from "./components/Player";
 import { Brand } from "./components/Brand";
 import { loadComposer, saveComposer } from "./lib/composer";
@@ -26,7 +26,6 @@ import {
   createSong,
   creationStatus,
   displayTitle,
-  exportSong,
   revealSong,
   trashSong,
   listSongs,
@@ -62,6 +61,7 @@ export default function App() {
   const [message, setMessage] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState<Song | null>(null);
   const player = usePlayer(songs);
   const openSong = songs.find((s) => s.id === openId) ?? null;
 
@@ -160,21 +160,7 @@ export default function App() {
       setPage("create");
     },
     onRename: (song) => setRenaming(song.id),
-    onDownload: (song) =>
-      void save({
-        defaultPath: `${displayTitle(song.request).replace(/[\\/:*?"<>|]/g, "")}.flac`,
-        filters: [{ name: "FLAC audio", extensions: ["flac"] }],
-      }).then(
-        (path) => {
-          if (!path) return;
-          void exportSong(song.id, path).then(
-            () => setMessage("Saved."),
-            (error: unknown) =>
-              setMessage(problem(error, "The song could not be saved.")),
-          );
-        },
-        () => setMessage("The save window could not be opened."),
-      ),
+    onDownload: (song) => setDownloading(song),
     onReveal: (song) =>
       void act(revealSong(song.id), "The song's folder could not be opened."),
     onQueue: (song) => {
@@ -323,6 +309,16 @@ export default function App() {
             <X size={15} />
           </button>
         </div>
+      )}
+      {downloading && (
+        <DownloadDialog
+          song={downloading}
+          onClose={() => setDownloading(null)}
+          onDone={(text) => {
+            setDownloading(null);
+            setMessage(text);
+          }}
+        />
       )}
       {(modal?.kind === "settings" || modal?.kind === "agent") && (
         <Dialog onClose={() => setModal(null)}>

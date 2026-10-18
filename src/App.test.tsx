@@ -13,6 +13,10 @@ vi.mock("./lib/hardware", async (importOriginal) => ({
   detectHardware: vi.fn().mockResolvedValue(null),
   chooseModelFolder: vi.fn().mockResolvedValue("/existing/models"),
 }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({
+  save: vi.fn().mockResolvedValue("/Users/me/Music/Sunday.wav"),
+  open: vi.fn(),
+}));
 vi.mock("./lib/songs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./lib/songs")>();
   return {
@@ -233,6 +237,33 @@ describe("library", () => {
     );
     await user.click(screen.getByRole("button", { name: "Back" }));
     expect(screen.getByRole("heading", { name: "My workspace" })).toBeVisible();
+  });
+
+  it("downloads in the chosen format and remembers it", async () => {
+    vi.mocked(songs.listSongs).mockResolvedValue([
+      song({ request: { ...song().request, title: "Sunday" } }),
+    ]);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(
+      await screen.findByRole("button", { name: "More for Sunday" }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Download" }));
+    const dialog = screen.getByRole("dialog");
+    expect(
+      within(dialog)
+        .getAllByRole("radio")
+        .map((r) => r.querySelector("strong")?.textContent),
+    ).toEqual(["MP3", "WAV", "FLAC"]);
+    await user.click(within(dialog).getByRole("radio", { name: /WAV/ }));
+    await user.click(within(dialog).getByRole("button", { name: "Download" }));
+    expect(songs.exportSong).toHaveBeenCalledWith(
+      "0123456789abcdef0123456789abcdef",
+      "wav",
+      "/Users/me/Music/Sunday.wav",
+    );
+    expect(await screen.findByText("Downloaded.")).toBeVisible();
+    expect(localStorage.getItem("aulo.download-format.v1")).toBe("wav");
   });
 
   it("titles untitled songs from their first sung line", () => {
