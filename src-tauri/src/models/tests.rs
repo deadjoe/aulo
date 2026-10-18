@@ -272,3 +272,27 @@ fn corrupt_saved_settings_do_not_grant_readiness() {
     assert_eq!(state.phase, "not_started");
     assert!(!state.models_verified);
 }
+
+#[test]
+fn unchanged_verified_models_stay_ready_after_restart_and_changes_require_checks() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("models");
+    let m = catalog(fixture(b"hello world"));
+    fs::create_dir_all(root.join("YuE2-3B")).unwrap();
+    fs::write(root.join(&m.files[0].path), b"hello world").unwrap();
+    save_verified(temp.path(), &root, &m).unwrap();
+    let state = restore_status(temp.path(), &m);
+    assert_eq!(state.phase, "verified");
+    assert!(state.models_verified);
+    assert!(!state.generation_ready);
+    fs::write(root.join(&m.files[0].path), b"hello there").unwrap();
+    let file = File::options()
+        .write(true)
+        .open(root.join(&m.files[0].path))
+        .unwrap();
+    file.set_modified(std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1))
+        .unwrap();
+    let state = restore_status(temp.path(), &m);
+    assert_eq!(state.phase, "unverified");
+    assert!(!state.models_verified);
+}

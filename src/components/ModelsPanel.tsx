@@ -1,3 +1,4 @@
+import EngineStatus from "./EngineStatus";
 import { useEffect, useState } from "react";
 import {
   ArrowRight,
@@ -301,12 +302,7 @@ export default function ModelsPanel() {
       )}
       <div className="runtime-status">
         <CircleHelp size={16} />
-        <p>
-          <strong>Music engine: not installed yet.</strong>{" "}
-          {verified
-            ? "Your models are verified, but music generation is not available until the engine is installed and tested."
-            : "Model preparation does not install the music engine. You can explore the workspace at any time."}
-        </p>
+        <EngineStatus />
       </div>
       {error && (
         <p className="error" role="alert">

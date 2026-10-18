@@ -11,20 +11,19 @@ afterEach(() => {
   vi.resetAllMocks();
 });
 
-it("shows detection without claiming generation readiness", async () => {
+it("reports an unsupported computer in plain language", async () => {
   vi.mocked(inspectEngine).mockResolvedValue({
-    state: "detected",
+    state: "unsupported",
     generationReady: false,
     engineVersion: "1.0.10",
-    device: "mps",
+    device: "cpu",
+    backend: null,
     message:
-      "The music engine was detected. Model loading and generation still need verification.",
+      "The music engine started, but this computer has no supported graphics acceleration.",
   });
   render(<EngineStatus />);
   expect(
-    await screen.findByText(
-      /Model loading and generation still need verification/,
-    ),
+    await screen.findByText(/no supported graphics acceleration/),
   ).toBeVisible();
 });
 

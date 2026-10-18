@@ -1,31 +1,47 @@
 # Private music engine boundary
 
-Aulo calls the existing installed `yue2_groove.adapter`; it does not import Gradio handlers, start a web server, copy model implementations, or change the GROOVE checkout. `runtime/bridge.py` uses protocol version 1 over UTF-8 newline-delimited JSON. Library output, including native stdout, is redirected to stderr. Each process accepts exactly one request and exits.
+Aulo calls the existing installed `yue2_groove.adapter`; it does not import Gradio handlers, start a web server, copy model implementations, or change the GROOVE checkout. `runtime/bridge.py` uses protocol version 2 over UTF-8 newline-delimited JSON. Library output, including native stdout, is redirected to stderr. Each process accepts one request and exits; during a generation the host may send one `cancel` line.
 
-## Current desktop integration
+## Discovery and readiness
 
 The Rust `engine_status` command discovers only Aulo's private runtime location. Debug builds may use an absolute `AULO_DEV_PYTHON` interpreter path supplied by the developer. Release builds ignore that override. No interpreter selector, command field, or dependency configuration is exposed to users. There is no PATH search or shell invocation.
 
-The bridge checks the installed GROOVE 1.0.10 and YuE2 0.1.6 versions, imports the real adapter and PyTorch, and checks accelerator availability. The native host enforces a 30-second timeout, limits protocol output to 64 KiB, checks the versioned reply, and reaps failed or timed-out children. Offline mode is forced and no weights are loaded by this check. A successful probe means **detected**, never generation-ready. The Settings dialog reports the result.
+The probe checks the installed GROOVE 1.0.10 and YuE2 0.1.6 versions, imports the real adapter and PyTorch, and selects an engine with GROOVE's own rules:
 
-This increment does not distribute a runtime. The reserved interpreter locations are `runtime/python/bin/python3` on macOS and `runtime/python/python.exe` on Windows, under application data. Installation must add verified platform artifacts and compatibility checks before those paths become a supported user-facing setup flow.
+- `gguf_engine.auto_backend` decides between PyTorch and the GGUF engine (yue2.cpp), including NVIDIA cards that a CPU-only PyTorch cannot see.
+- On CUDA without a usable FlashAttention kernel, GROOVE's eager decoder is used, as in `webui/runtime.effective_backend`.
+- A computer whose only option is the CPU is reported as unsupported; Aulo does not offer multi-hour CPU generation.
 
-## Developer generation path
+A successful probe is cached for the session. Creation requires both a ready engine and verified models; `creation_status` reports which one is missing in plain language. The native host enforces a probe timeout, limits protocol output, checks the versioned reply, and reaps failed or timed-out children.
 
-The bridge also accepts a `generate` operation with `protocolVersion`, `style`, `lyrics`, optional `title` and `abc`, and absolute `modelRoot` and `outputRoot` paths. This path is not exposed as a desktop command. The model root contains `YuE2-3B` and `YuE2-Vae`; use a separately verified model folder. No network fallback or model download is permitted.
+The reserved interpreter locations are `runtime/python/bin/python3` on macOS and `runtime/python/python.exe` on Windows, under application data. GGUF binaries, when present, are read from `runtime/yue2cpp`, and converted GGUF files are written to `models/gguf`, both under application data.
 
-Generation delegates to the existing adapter's pipeline loading, request, sampling, generation, progress, artifact-saving and cleanup APIs. The initial integration profile uses eager PyTorch, the upstream 24 GiB memory budget, bfloat16, AR offloading, 50 ODE steps, and GROOVE's existing sampling defaults. This is a developer profile, not an automatically validated hardware recommendation. CPU fallback is rejected. GGUF and low-memory hardware require a separate tested integration profile before enabling generation for users.
+## Generation
 
-Progress reports real stages and available NAR/VAE step counts, without estimating a whole-song percentage. Works receive random directory identifiers, never title-derived paths. Completed output must contain decodable, nonempty audio. Artifacts are flushed before the pending marker is removed; failed runs retain that marker and cannot be treated as completed. Abruptly interrupted runs can retain `running` markers and must be reconciled by the future library service.
+`generate` accepts the simple controls the UI shows: `style`, `lyrics`, `instrumental`, `vocal`, `weirdness`, and `styleInfluence`, plus the work identifier and absolute model and output roots. Scores, seeds, sampling values, and engine names are never accepted from the UI.
 
-Unit tests use explicit fake adapter/audio fixtures to verify delegation and failure handling. They do not validate inference quality, performance, or real audio generation. A separate real MPS smoke test generated and fully decoded a 59.28-second stereo song through this bridge; see [validation](VALIDATION.md). That run reused an existing development interpreter and does not validate private runtime installation.
+The bridge maps the controls onto GROOVE's documented recipes ([GENERATION_CREATIVITY_KNOBS.md](https://github.com/deadjoe/yue2_groove/blob/main/docs/GENERATION_CREATIVITY_KNOBS.md)) and keeps every other value at GROOVE's defaults:
+
+| Control                       | Engine value                                                                       |
+| ----------------------------- | ---------------------------------------------------------------------------------- |
+| Style influence 0 / 50 / 100  | CFG unguided / 1.5 / 2.0                                                           |
+| Weirdness 0 / 50 / 100        | Semantic temperature 0.85 / 1.0 / 1.25                                             |
+| Voice female / male           | `female vocal` / `male vocal` added to the style                                   |
+| Instrumental                  | GROOVE's best-effort recipe: empty lyric sections and an `instrumental` style hint |
+| Lyrics without section labels | Wrapped in one `[Verse]`                                                           |
+
+YuE2 has no instrumental switch, so the UI says that some humming can still appear. Plan mode is always `full`, ODE steps are GROOVE's default 32, the seed is random per song, and the semantic budget is trimmed to the model context as GROOVE does.
+
+Progress reports real stages (preparing, writing, performing, rendering, mixing, saving) and the NAR/VAE step counts the engine exposes, without estimating a whole-song percentage. Completed output must contain decodable, nonempty audio, and artifacts are flushed before the pending marker is removed. Cancelled and failed runs keep a pending marker with their state.
+
+## Song service
+
+`src-tauri/src/songs.rs` owns one queue and one running engine process. Works are folders under `<app-data>/library/<id>/` with an atomically replaced `aulo.json` record and an `engine.log`. Only a `completed` event with an existing `audio.flac` and no pending marker makes a work playable. Works left queued or running by a previous session are marked interrupted at startup. Stop sends `cancel` and terminates the process if it has not exited after 30 seconds. Playback uses Tauri's asset protocol, scoped to `library/*/audio.flac`.
 
 ## Remaining integration gates
 
-- Real model-load and full-song smoke test in an isolated Aulo runtime.
-- Hardware-specific profiles, including the existing GGUF backend and Windows device validation.
-- Native generation supervisor with a single GPU queue, cancellation and app-exit cleanup.
-- Durable library indexing, interrupted-job recovery, restricted audio serving and playback.
-- Verified runtime distribution, signatures, installation recovery and upgrades.
-
-The composer stays disabled until these gates are implemented and validated. Model verification, a compatible import, and a successful CI run cannot independently unlock it.
+- Packaged runtimes per platform, installed and smoke-tested on clean machines.
+- Windows device validation of the GGUF and PyTorch paths through Aulo.
+- Keeping one model loaded between songs; each song currently loads the model in its own process.
+- Cover and edit flows.
+- Signed distribution, updates, and rollback.

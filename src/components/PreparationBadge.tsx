@@ -30,17 +30,20 @@ export default function PreparationBadge({ onOpen }: { onOpen: () => void }) {
       clearTimeout(timer);
     };
   }, []);
-  let text = "Preview · Engine not connected";
+  let text = "Music models not set up";
   if (unavailable) text = "Preparation status unavailable";
   else if (modelOperationActive(status))
     text = `Preparing models · ${Math.min(100, Math.floor((status!.completedBytes / Math.max(status!.totalBytes, 1)) * 100))}%`;
   else if (status?.phase === "paused") text = "Model preparation paused";
   else if (status?.phase === "failed")
     text = "Model preparation needs attention";
-  else if (status?.modelsVerified) text = "Models verified · Engine pending";
+  else if (status?.modelsVerified) text = "Music models ready";
   else if (status?.phase === "unverified") text = "Saved models need a check";
   return (
-    <button className="preview-badge" onClick={onOpen}>
+    <button
+      className={`setup-badge${status?.modelsVerified ? " ready" : ""}`}
+      onClick={onOpen}
+    >
       <span />
       {text}
     </button>

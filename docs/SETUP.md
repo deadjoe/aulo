@@ -6,7 +6,7 @@
 2. Computer check: read processor, architecture, physical memory, destination-volume free space, and Windows NVIDIA device memory. Browser mode reports unknown values.
 3. Music essentials: choose existing models or request a managed download. The wizard shows total size, required free storage, the storage location, and model-license information before downloading.
 4. Preparation: real transfer or read-only checksum verification, with progress, pause, retry, and restart recovery. No progress simulation remains.
-5. Explore: open the local draft workspace. The top bar keeps preparation status visible and reopens the essentials screen directly. Exploring never means the engine is ready.
+5. Explore: open the creation workspace. The sidebar keeps preparation status visible and reopens the essentials screen directly. Exploring never means the engine is ready; the create panel says what is still missing.
 
 ## Implemented model state machine
 
@@ -16,11 +16,12 @@ not_started -> checking -> downloading -> verifying -> verified
                   +------------+-------------+--> paused / failed
 
 application restart:
-  saved verified location -> unverified -> explicit verification
+  saved verified location, files unchanged -> verified
+  saved verified location, files changed   -> unverified -> explicit verification
   partial managed download -> paused -> explicit resume
 ```
 
-`modelsVerified` describes checksums in the current session only. `generationReady` remains false and `runtimeState` remains `not_bundled` in this release. Verification does not load a model or test inference. Changes to files after verification still require a new check before a future runtime uses them.
+`modelsVerified` means every file passed its checksum. After a restart, a saved verification stays valid only while every file keeps the size and modification time recorded when it passed; any difference requires a full check again. Verification does not load a model or test inference; engine readiness is checked separately (see [engine](ENGINE.md)).
 
 ## Catalog and storage
 
