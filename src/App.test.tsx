@@ -528,26 +528,41 @@ describe("library", () => {
     );
   });
 
-  it("shows settings without technical controls", async () => {
+  it("opens settings from the sidebar or the keyboard, with the AI assistant inside", async () => {
     const user = userEvent.setup();
     render(<App />);
+    expect(
+      screen.queryByRole("button", { name: /AI connection/ }),
+    ).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Settings" }));
     const dialog = screen.getByRole("dialog");
-    for (const title of ["Music models", "Music engine", "Your songs"])
-      expect(within(dialog).getByText(title)).toBeVisible();
-    expect(within(dialog).queryByRole("textbox")).not.toBeInTheDocument();
-    expect(within(dialog).queryByRole("combobox")).not.toBeInTheDocument();
-  });
-
-  it("keeps agent integration explicitly unconnected and closes dialogs with Escape", async () => {
-    const user = userEvent.setup();
-    render(<App />);
-    await user.click(screen.getByRole("button", { name: "AI connection" }));
-    expect(screen.getByText(/Nothing is connected yet/)).toBeVisible();
-    expect(screen.getByRole("dialog")).toHaveFocus();
+    const sections = within(dialog).getByRole("navigation", {
+      name: "Settings sections",
+    });
+    expect(
+      within(sections)
+        .getAllByRole("button")
+        .map((b) => b.textContent),
+    ).toEqual([
+      "Creating",
+      "Storage",
+      "Music models",
+      "AI assistant",
+      "Help & About",
+    ]);
+    expect(within(dialog).queryByText(/engine/i)).not.toBeInTheDocument();
+    await user.click(
+      within(sections).getByRole("button", { name: "AI assistant" }),
+    );
+    expect(
+      within(dialog).getByText(/Nothing is connected to Aulo/),
+    ).toBeVisible();
+    expect(within(dialog).queryByRole("switch")).not.toBeInTheDocument();
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "AI connection" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Settings" })).toHaveFocus();
+    await user.keyboard("{Control>},{/Control}");
+    expect(screen.getByRole("dialog")).toBeVisible();
   });
 });
 

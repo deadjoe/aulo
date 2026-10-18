@@ -443,6 +443,91 @@ pub fn download_models(
     });
     Ok(())
 }
+/// Delete Aulo's own copy of the music models: its models folder (downloaded files,
+/// partial downloads and converted engine files) and its record of them. A folder the
+/// person chose themselves lies outside it and is never touched; Aulo only stops using
+/// it. Returns that folder, if there was one.
+pub fn remove_model_files(base: &Path) -> Result<Option<PathBuf>, String> {
+    let _lock = lock_storage(base)?;
+    let models = base.join("models");
+    let chosen = fs::read(base.join("models.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<SavedModels>(&bytes).ok())
+        .map(|saved| saved.model_root)
+        .filter(|root| !root.starts_with(&models));
+    match fs::symlink_metadata(&models) {
+        // Never follow a link out of Aulo's folder.
+        Ok(meta) if meta.file_type().is_symlink() => fs::remove_file(&models),
+        Ok(_) => fs::remove_dir_all(&models),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
+    }
+    .map_err(|_| {
+        "Aulo couldn’t remove the music models. Close other apps using them and try again."
+            .to_string()
+    })?;
+    match fs::remove_file(base.join("models.json")) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+            return Err("Aulo couldn’t finish removing the music models. Try again.".into())
+        }
+        _ => {}
+    }
+    Ok(chosen)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemovedModels {
+    /// A folder of the person's own that Aulo stopped using but did not delete.
+    pub kept_folder: Option<String>,
+}
+
+/// Settings › Remove music models.
+#[tauri::command]
+pub async fn remove_models(
+    app: tauri::AppHandle,
+    manager: tauri::State<'_, ModelManager>,
+    songs: tauri::State<'_, crate::songs::SongService>,
+) -> Result<RemovedModels, String> {
+    let m = manifest()?;
+    let base = base_path(&app)?;
+    if manager
+        .0
+        .busy
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return Err("The music models are being prepared. Pause or finish that first.".into());
+    }
+    let _guard = BusyGuard(manager.inner().clone());
+    let before = manager.0.status.lock().unwrap().clone();
+    // From here on nothing may start a song with these models.
+    manager.update(|s| {
+        s.models_verified = false;
+        s.phase = "removing".into();
+        s.message = "Removing the music models…".into();
+    });
+    let songs = songs.inner().clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        songs.unload_engine()?;
+        remove_model_files(&base).map(|kept| (kept, base))
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    match result {
+        Ok((kept, base)) => {
+            *manager.0.status.lock().unwrap() = Some(restore_status(&base, &m));
+            Ok(RemovedModels {
+                kept_folder: kept.map(|p| p.to_string_lossy().into_owned()),
+            })
+        }
+        Err(error) => {
+            *manager.0.status.lock().unwrap() = before;
+            Err(error)
+        }
+    }
+}
+
 #[tauri::command]
 pub fn verify_models(
     app: tauri::AppHandle,

@@ -141,7 +141,6 @@ export interface ShareAnchor {
 export const shareSong = (id: string, title: string, anchor: ShareAnchor) =>
   invoke<void>("share_song", { id, title, anchor });
 export const revealSong = (id: string) => invoke<void>("reveal_song", { id });
-export const revealLibrary = () => invoke<void>("reveal_library");
 export const appVersion = async () => {
   const { getVersion } = await import("@tauri-apps/api/app");
   return getVersion();

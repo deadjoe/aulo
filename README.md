@@ -17,7 +17,7 @@ Implemented:
 - Workspaces (with Save to when creating, archiving and renaming) and playlists; multi-select with batch Add to playlist, Add to queue, Move to workspace and Move to Trash, with shortcuts; search, filters, sorting, and List, Waveform and Grid layouts.
 - A library grouped by day with generated cover art and likes; song details with lyrics; a song menu with Create another version, Reuse settings, Rename, Download, Show in Finder, Add to queue, and Move to Trash; and a bottom player.
 - Engine selection is delegated to GROOVE's own rules (PyTorch on Apple Silicon and large NVIDIA cards, the GGUF engine on smaller NVIDIA cards).
-- An independent placeholder for connecting the user's existing AI agent.
+- Settings (⌘,): notifications when a song is ready, whether Aulo stays ready between songs or frees its memory, storage use with Empty Trash and an optional 30-day automatic empty, the music models (check, download, remove), a placeholder for connecting the user's existing AI assistant, and a problem report that leaves out everything the person wrote.
 
 Not implemented: the Windows engine package, cover/edit integration, agent connection, signed installers, or automatic updates. Windows behavior compiles and is unit-tested but needs physical-device validation. See the [engine integration boundary](docs/ENGINE.md).
 

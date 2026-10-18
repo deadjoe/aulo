@@ -2,9 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   Check,
   ChevronRight,
-  CircleHelp,
   Library,
-  Link2,
   Play,
   Settings2,
   Trash2,
@@ -12,9 +10,8 @@ import {
   X,
 } from "lucide-react";
 import SetupWizard from "./components/SetupWizard";
-import Dialog from "./components/Dialog";
 import PreparationBadge from "./components/PreparationBadge";
-import SettingsDialog from "./components/SettingsDialog";
+import SettingsPanel from "./components/SettingsPanel";
 import Composer from "./components/Composer";
 import LibraryPanel from "./components/LibraryPanel";
 import CollectionsView from "./components/CollectionsView";
@@ -29,6 +26,13 @@ import Player, { usePlayer } from "./components/Player";
 import { Brand } from "./components/Brand";
 import { EMPTY_REQUEST, loadComposer, saveComposer } from "./lib/composer";
 import { useLibrary, useMessage } from "./lib/useLibrary";
+import {
+  DEFAULT_SETTINGS,
+  getSettings,
+  notifyInBackground,
+  prepareNotifications,
+  type Settings,
+} from "./lib/settings";
 import {
   addToPlaylist,
   archiveWorkspace,
@@ -55,7 +59,7 @@ import {
 } from "./lib/songs";
 
 type Page = "create" | "library";
-type Modal = { kind: "settings" } | { kind: "agent" };
+type Modal = { kind: "settings" };
 type LibraryTab = "songs" | "playlists" | "workspaces" | "history";
 interface Confirmation {
   title: string;
@@ -100,13 +104,30 @@ export default function App() {
   const [request, setRequest] = useState<SongRequest>(loadComposer);
   const [status, setStatus] = useState<CreationStatus | null>(null);
   const [creating, setCreating] = useState(false);
+  const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
+  useEffect(() => {
+    getSettings().then(setSettings, () => undefined);
+  }, []);
+  // Settings opens with ⌘, on macOS and Ctrl+, elsewhere, as in other apps.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "," && (e.metaKey || e.ctrlKey) && explored) {
+        e.preventDefault();
+        setModal({ kind: "settings" });
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [explored]);
   const { message, undo, notify, dismiss } = useMessage();
   const {
     songs: allSongs,
     collections,
     start,
     remove,
-  } = useLibrary(explored, notify);
+  } = useLibrary(explored, notify, (notice) => {
+    if (settings.notifyWhenDone) void notifyInBackground(notice);
+  });
   // Songs in Aulo's Trash only appear in the Trash.
   const songs = allSongs.filter((s) => !s.trashedMs);
   const trashed = allSongs.filter((s) => s.trashedMs);
@@ -176,6 +197,7 @@ export default function App() {
   }
   async function create() {
     setCreating(true);
+    void prepareNotifications(settings).catch(() => undefined);
     // A short, visible acknowledgement on the button, like a press.
     const settle = new Promise((resolve) => window.setTimeout(resolve, 700));
     try {
@@ -638,10 +660,6 @@ export default function App() {
         </nav>
         <div className="nav-bottom">
           <PreparationBadge onOpen={openSetup} />
-          <button onClick={() => setModal({ kind: "agent" })}>
-            <Link2 />
-            AI connection
-          </button>
           <button onClick={() => setModal({ kind: "settings" })}>
             <Settings2 />
             Settings
@@ -814,39 +832,13 @@ export default function App() {
         />
       )}
       {modal?.kind === "settings" && (
-        <SettingsDialog
+        <SettingsPanel
+          songs={allSongs}
           onClose={() => setModal(null)}
-          onOpenSetup={openSetup}
-          onError={(text) => notify(text)}
+          onDeleted={remove}
+          onSettingsChanged={setSettings}
+          notify={notify}
         />
-      )}
-      {modal?.kind === "agent" && (
-        <Dialog onClose={() => setModal(null)}>
-          <header>
-            <span className="section-icon">
-              <Link2 size={21} />
-            </span>
-            <button
-              className="icon-button"
-              aria-label="Close"
-              onClick={() => setModal(null)}
-            >
-              <X size={18} />
-            </button>
-          </header>
-          <h2 id="modal-title">Bring your AI assistant</h2>
-          <p>
-            Soon you’ll be able to connect an AI assistant you already use, so
-            it can help write lyrics and shape songs with you in Aulo.
-          </p>
-          <div className="notice">
-            <CircleHelp size={17} />
-            <p>
-              Nothing is connected yet, and Aulo doesn’t send your lyrics
-              anywhere.
-            </p>
-          </div>
-        </Dialog>
       )}
     </div>
   );

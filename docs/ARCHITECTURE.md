@@ -53,6 +53,10 @@ The Tauri host will own the child process lifecycle and recover from crashes. Th
 
 Do not update a loaded engine while a job is running. Keep the previous working runtime until the replacement passes health checks. Store models and works outside the application bundle. Signing, update verification, and rollback remain future implementation work.
 
+## Settings
+
+`SettingsPanel` has five sections: Creating, Storage, Music models, AI assistant and Help & About. Choices are saved to `<app-data>/settings.json` (`src-tauri/src/settings.rs`) and applied at once: "Between songs" sets whether the engine is unloaded 10 minutes after the last song or kept until Aulo quits, and "Free up memory now" unloads it when no song is being made. Songs that have been in Aulo's Trash longer than the chosen period are deleted when the library loads and when the setting changes, the same way as deleting by hand. Removing the music models deletes only Aulo's own `models` folder and its record; a folder the person chose is left untouched. The problem report (`src-tauri/src/support.rs`) holds versions, the computer's specification, model and engine state, song counts and the end of the engine log, with every line of lyrics, styles and titles removed. A system notification is shown when a song finishes or fails while Aulo is in the background.
+
 ## AI agent connection
 
 Reserved as an independent integration. A later settings flow may connect an existing compatible local agent through MCP or a CLI adapter. It must use the same job and work contracts as the UI and explicitly disclose any external data transfer. This preview reads no agent configuration and makes no agent requests.

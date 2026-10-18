@@ -104,3 +104,36 @@ describe("library view", () => {
     expect(groupSongs(all, "newest")[0][1]).toHaveLength(3);
   });
 });
+
+import { finishedNotice, formatSize } from "./settings";
+
+describe("finished notices", () => {
+  it("speaks only when a song stops being made", () => {
+    expect(
+      finishedNotice(song("a", "running"), song("a", "completed")),
+    ).toEqual({ title: "Your song is ready", body: "“a” is ready to play." });
+    expect(
+      finishedNotice(song("a", "queued"), {
+        ...song("a", "failed"),
+        message: "The music engine stopped.",
+      }),
+    ).toEqual({
+      title: "A song couldn’t be finished",
+      body: "The music engine stopped.",
+    });
+    // Reloads, likes and renames of finished songs never notify.
+    expect(finishedNotice(song("a"), song("a"))).toBeNull();
+    expect(finishedNotice(undefined, song("a"))).toBeNull();
+    // Stopping a song yourself is not news.
+    expect(
+      finishedNotice(song("a", "running"), song("a", "cancelled")),
+    ).toBeNull();
+  });
+
+  it("writes sizes people read", () => {
+    expect(formatSize(7_790_000_000)).toBe("7.8 GB");
+    expect(formatSize(95_400_000)).toBe("95 MB");
+    expect(formatSize(1200)).toBe("Less than 1 MB");
+    expect(formatSize(0)).toBe("None");
+  });
+});
