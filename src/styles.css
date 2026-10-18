@@ -1460,6 +1460,96 @@ input[type="range"]:disabled {
   filter: none;
 }
 
+/* Download */
+.modal:has(.download-dialog) {
+  width: min(420px, 92vw);
+  padding: 28px 24px 24px;
+  background: #1d201c;
+  border-color: #33392f;
+  border-radius: 24px;
+}
+.download-dialog {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.dialog-close {
+  position: absolute;
+  top: -12px;
+  right: -8px;
+  background: var(--raised);
+}
+.download-dialog h2 {
+  margin: 4px 0 4px;
+  font-size: 26px;
+  font-weight: 500;
+  letter-spacing: -0.5px;
+  text-align: center;
+  line-height: 1.25;
+}
+.download-dialog h2 span {
+  display: block;
+  font-size: 18px;
+  color: var(--soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 24px;
+}
+.format-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.format-list button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  border-radius: 14px;
+  background: var(--raised);
+  text-align: left;
+}
+.format-list button span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.format-list strong {
+  font-size: 16px;
+  font-weight: 550;
+}
+.format-list small {
+  font-size: 12px;
+  color: var(--muted);
+}
+.format-list button.selected {
+  background: #f1efe8;
+  color: #1b1d1a;
+  filter: none;
+}
+.format-list button.selected small {
+  color: #5d6158;
+}
+.download-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  height: 52px;
+  border-radius: 999px;
+  background: #f1efe8;
+  color: #1b1d1a;
+  font-size: 16px;
+  font-weight: 600;
+}
+.download-dialog .error {
+  margin: 0;
+  text-align: center;
+}
+
 /* Song details */
 .song-detail {
   min-height: 0;

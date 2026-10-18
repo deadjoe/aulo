@@ -284,3 +284,58 @@ fn live_resident_engine_generates_and_reuses_the_model() {
     eprintln!("first {first:.1}s, cancelled after {cancelled:.1}s, second {second:.1}s");
     live.process.shutdown(Duration::from_secs(20));
 }
+
+#[test]
+fn flac_export_copies_the_original_and_replaces_only_when_done() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("audio.flac");
+    fs::write(&source, b"original").unwrap();
+    let destination = dir.path().join("Song.flac");
+    fs::write(&destination, b"old").unwrap();
+    export_audio(dir.path(), &source, AudioFormat::Flac, &destination).unwrap();
+    assert_eq!(fs::read(&destination).unwrap(), b"original");
+    let leftovers = fs::read_dir(dir.path())
+        .unwrap()
+        .filter(|e| {
+            e.as_ref()
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".aulo-")
+        })
+        .count();
+    assert_eq!(leftovers, 0);
+}
+
+#[test]
+fn failed_conversions_leave_the_destination_untouched() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("audio.flac");
+    fs::write(&source, b"not audio").unwrap();
+    let destination = dir.path().join("Song.mp3");
+    fs::write(&destination, b"keep").unwrap();
+    // No runtime interpreter exists under this base, so the converter cannot start.
+    assert!(export_audio(dir.path(), &source, AudioFormat::Mp3, &destination).is_err());
+    assert_eq!(fs::read(&destination).unwrap(), b"keep");
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "Converts a real song with the development runtime and macOS encoders"]
+fn live_exports_every_format() {
+    let base = PathBuf::from(std::env::var_os("AULO_DEV_BASE").expect("Set AULO_DEV_BASE"));
+    let source = PathBuf::from(std::env::var_os("AULO_DEV_FLAC").expect("Set AULO_DEV_FLAC"));
+    let dir = tempfile::tempdir().unwrap();
+    for format in [
+        AudioFormat::M4a,
+        AudioFormat::Mp3,
+        AudioFormat::Wav,
+        AudioFormat::Flac,
+    ] {
+        let destination = dir.path().join(format!("Song.{}", format.extension()));
+        export_audio(&base, &source, format, &destination).unwrap();
+        let size = fs::metadata(&destination).unwrap().len();
+        eprintln!("{format:?}: {size} bytes");
+        assert!(size > 100_000);
+    }
+}

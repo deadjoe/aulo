@@ -12,8 +12,9 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::VecDeque,
     fs::{self, File},
+    io::Write,
     path::{Path, PathBuf},
-    process::{Child, ChildStdin, Stdio},
+    process::{Child, ChildStdin, Command, Stdio},
     sync::{Arc, Condvar, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -743,28 +744,136 @@ fn finished_audio(
     })?
 }
 
-/// Copy a finished song to a place the person chose in the save dialog.
+/// Download formats. FLAC is the original; the others are made from it.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum AudioFormat {
+    M4a,
+    Mp3,
+    Wav,
+    Flac,
+}
+
+impl AudioFormat {
+    fn extension(self) -> &'static str {
+        match self {
+            Self::M4a => "m4a",
+            Self::Mp3 => "mp3",
+            Self::Wav => "wav",
+            Self::Flac => "flac",
+        }
+    }
+}
+
+/// Run a converter to completion within `limit`, stopping it otherwise.
+fn run_converter(mut command: Command, limit: Duration) -> Result<(), String> {
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
+    let mut child = command.spawn().map_err(|e| e.to_string())?;
+    let started = std::time::Instant::now();
+    loop {
+        match child.try_wait().map_err(|e| e.to_string())? {
+            Some(status) if status.success() => return Ok(()),
+            Some(_) => return Err("conversion failed".into()),
+            None if started.elapsed() > limit => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("conversion timed out".into());
+            }
+            None => std::thread::sleep(Duration::from_millis(100)),
+        }
+    }
+}
+
+/// Write `source` to `destination` in `format`, replacing it only once complete.
+pub fn export_audio(
+    base: &Path,
+    source: &Path,
+    format: AudioFormat,
+    destination: &Path,
+) -> Result<(), String> {
+    let parent = destination.parent().ok_or("Choose a folder to save in.")?;
+    let staged = tempfile::Builder::new()
+        .prefix(".aulo-")
+        .suffix(&format!(".{}", format.extension()))
+        .tempfile_in(parent)
+        .map_err(|e| e.to_string())?;
+    match format {
+        AudioFormat::Flac => {
+            fs::copy(source, staged.path()).map_err(|e| e.to_string())?;
+        }
+        AudioFormat::M4a => {
+            if !cfg!(target_os = "macos") {
+                return Err("M4A downloads are available on macOS.".into());
+            }
+            let mut command = Command::new("/usr/bin/afconvert");
+            command
+                .args(["-f", "m4af", "-d", "aac", "-b", "256000"])
+                .arg(source)
+                .arg(staged.path());
+            run_converter(command, Duration::from_secs(300))?;
+        }
+        AudioFormat::Mp3 | AudioFormat::Wav => {
+            let mut script = tempfile::NamedTempFile::new().map_err(|e| e.to_string())?;
+            script
+                .write_all(include_bytes!("../../runtime/convert.py"))
+                .and_then(|_| script.flush())
+                .map_err(|e| e.to_string())?;
+            let mut command = Command::new(engine::interpreter(base));
+            command
+                .arg("-I")
+                .arg(script.path())
+                .arg(source)
+                .arg(staged.path())
+                .arg(format.extension())
+                .env("PYTHONUTF8", "1");
+            run_converter(command, Duration::from_secs(300))?;
+        }
+    }
+    if fs::metadata(staged.path()).map_or(0, |m| m.len()) == 0 {
+        return Err("conversion produced no audio".into());
+    }
+    staged
+        .persist(destination)
+        .map_err(|e| e.error.to_string())?;
+    Ok(())
+}
+
+/// Save a finished song where the person chose, in the format they chose.
 #[tauri::command]
 pub async fn export_song(
     app: tauri::AppHandle,
     service: tauri::State<'_, SongService>,
     id: String,
+    format: AudioFormat,
     destination: String,
 ) -> Result<(), String> {
     let source = finished_audio(&app, &service, &id)?;
+    let base = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let destination = PathBuf::from(destination);
     if !destination.is_absolute()
         || destination
             .extension()
-            .is_none_or(|e| !e.eq_ignore_ascii_case("flac"))
+            .is_none_or(|e| !e.eq_ignore_ascii_case(format.extension()))
     {
-        return Err("Choose a file name ending in .flac.".into());
+        return Err(format!(
+            "Choose a file name ending in .{}.",
+            format.extension()
+        ));
     }
-    tauri::async_runtime::spawn_blocking(move || fs::copy(&source, &destination))
+    tauri::async_runtime::spawn_blocking(move || export_audio(&base, &source, format, &destination))
         .await
         .map_err(|e| e.to_string())?
-        .map(|_| ())
-        .map_err(|_| "The song could not be saved there. Choose another folder.".into())
+        .map_err(|_| {
+            "The song could not be saved in that format. Try another format or folder.".into()
+        })
 }
 
 #[tauri::command]

@@ -56,8 +56,12 @@ export const updateSong = (
   changes: { title?: string; favorite?: boolean },
 ) => invoke<void>("update_song", { id, ...changes });
 export const trashSong = (id: string) => invoke<void>("trash_song", { id });
-export const exportSong = (id: string, destination: string) =>
-  invoke<void>("export_song", { id, destination });
+export type AudioFormat = "m4a" | "mp3" | "wav" | "flac";
+export const exportSong = (
+  id: string,
+  format: AudioFormat,
+  destination: string,
+) => invoke<void>("export_song", { id, format, destination });
 export const revealSong = (id: string) => invoke<void>("reveal_song", { id });
 export function onSongUpdated(handler: (song: Song) => void) {
   if (!isTauri()) return () => {};

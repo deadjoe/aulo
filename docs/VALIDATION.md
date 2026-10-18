@@ -1,5 +1,11 @@
 # Validation record
 
+## Download formats — 2026-10-18
+
+- Opt-in live test `live_exports_every_format` converted a real 3:57 song: M4A 7.5 MB, MP3 9.5 MB (320 kbps), WAV 68.2 MB, FLAC 47.8 MB, about 5 seconds in total.
+- Unit tests cover the FLAC copy, staged replacement and a failed conversion leaving the existing file untouched; a component test covers choosing and remembering a format.
+- Windows offers MP3, WAV and FLAC; M4A needs a Windows encoder that is not integrated yet.
+
 ## Resident engine and song actions increment — 2026-10-18
 
 - `npm run check`: 24 frontend/component tests and the production build.
