@@ -150,6 +150,19 @@ pub fn valid_id(id: &str) -> bool {
             .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 
+const NOT_SAVED: &str =
+    "Aulo couldn’t save that change. Make sure your disk has free space, then try again.";
+
+/// Change a work and save it, or leave it exactly as it was.
+fn save_change(root: &Path, work: &mut Work, f: impl FnOnce(&mut Work)) -> Result<(), String> {
+    let before = work.clone();
+    f(work);
+    write_record(root, work).map_err(|_| {
+        *work = before;
+        NOT_SAVED.to_string()
+    })
+}
+
 fn write_record(root: &Path, work: &Work) -> Result<(), String> {
     let folder = root.join(&work.id);
     fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
@@ -182,10 +195,22 @@ pub fn load_library(root: &Path) -> Vec<Work> {
             continue;
         }
         if work.active() {
-            work.state = SongState::Interrupted;
+            let audio = entry.path().join("audio.flac");
+            // The engine removes pending.json only after the audio is complete and flushed,
+            // so a finished song whose record could not be saved is still recognised.
+            let finished = (!entry.path().join("pending.json").exists())
+                .then(|| crate::audio::flac_duration(&audio))
+                .flatten();
+            if let Some(duration) = finished {
+                work.state = SongState::Completed;
+                work.duration = Some(duration);
+                work.message = None;
+            } else {
+                work.state = SongState::Interrupted;
+                work.message = Some("Aulo closed before this song was finished.".into());
+            }
             work.stage = None;
             work.progress = None;
-            work.message = Some("Aulo closed before this song was finished.".into());
             let _ = write_record(root, &work);
         }
         if work.state == SongState::Completed {
@@ -390,6 +415,8 @@ impl SongService {
         let _ = app.emit("collections-updated", collections);
     }
 
+    /// Apply a change the engine reports. It stays in effect even if the record can't be
+    /// saved: the song's own files are the truth, and the next start reconciles from them.
     fn update(&self, app: &tauri::AppHandle, id: &str, persist: bool, f: impl FnOnce(&mut Work)) {
         let Ok(root) = library_root(app) else { return };
         let mut state = self.0 .0.lock().unwrap();
@@ -400,6 +427,24 @@ impl SongService {
             }
             Self::publish(app, work);
         }
+    }
+
+    /// Apply a change a person asked for. If it can't be saved it is undone, so what Aulo
+    /// shows never differs from what it will show after a restart.
+    fn change(
+        &self,
+        app: &tauri::AppHandle,
+        id: &str,
+        f: impl FnOnce(&mut Work),
+    ) -> Result<(), String> {
+        let root = library_root(app)?;
+        let mut state = self.0 .0.lock().unwrap();
+        let Some(work) = state.works.iter_mut().find(|w| w.id == id) else {
+            return Ok(());
+        };
+        save_change(&root, work, f)?;
+        Self::publish(app, work);
+        Ok(())
     }
 
     fn ensure_worker(&self, app: &tauri::AppHandle) {
@@ -766,15 +811,14 @@ pub fn update_song(
         }
     }
     service.with_state(&app, |_| ())?;
-    service.update(&app, &id, true, |work| {
+    service.change(&app, &id, |work| {
         if let Some(title) = title {
             work.request.title = title.trim().to_string();
         }
         if let Some(favorite) = favorite {
             work.favorite = favorite;
         }
-    });
-    Ok(())
+    })
 }
 
 pub(crate) fn finished_audio(
@@ -955,15 +999,22 @@ pub fn trash_songs(
             .collect()
     })?;
     let now = now_ms();
+    let mut saved = Vec::new();
     for id in &changed {
-        service.update(&app, id, true, |work| {
-            work.trashed_ms = trashed.then_some(now);
-        });
+        if service
+            .change(&app, id, |work| work.trashed_ms = trashed.then_some(now))
+            .is_ok()
+        {
+            saved.push(id.clone());
+        }
+    }
+    if saved.is_empty() && !changed.is_empty() {
+        return Err(NOT_SAVED.into());
     }
     if changed.is_empty() && trashed {
         return Err("Stop these songs before moving them to the Trash.".into());
     }
-    Ok(changed)
+    Ok(saved)
 }
 
 /// Delete songs from Aulo's Trash for good. Their folders go to the computer's
@@ -1096,7 +1147,7 @@ pub fn move_songs(
     }
     for id in &ids {
         let target = workspace.clone();
-        service.update(&app, id, true, |work| work.workspace = target);
+        service.change(&app, id, |work| work.workspace = target)?;
     }
     Ok(())
 }
@@ -1154,6 +1205,43 @@ pub fn remove_from_playlist(
     change_collections(&app, &service, |c| c.remove_from_playlist(&id, &songs))
 }
 
+/// A small counting gate: at most `limit` holders at once.
+struct Turns {
+    limit: usize,
+    taken: Mutex<usize>,
+    freed: Condvar,
+}
+
+struct Turn(&'static Turns);
+
+impl Turns {
+    const fn new(limit: usize) -> Self {
+        Self {
+            limit,
+            taken: Mutex::new(0),
+            freed: Condvar::new(),
+        }
+    }
+
+    fn take(&'static self) -> Turn {
+        let mut taken = self.taken.lock().unwrap();
+        while *taken >= self.limit {
+            taken = self.freed.wait(taken).unwrap();
+        }
+        *taken += 1;
+        Turn(self)
+    }
+}
+
+impl Drop for Turn {
+    fn drop(&mut self) {
+        *self.0.taken.lock().unwrap() -= 1;
+        self.0.freed.notify_one();
+    }
+}
+
+static WAVEFORM_TURNS: Turns = Turns::new(2);
+
 /// Loudness peaks for drawing a finished song's waveform, cached beside its audio.
 #[tauri::command]
 pub async fn song_waveform(
@@ -1163,6 +1251,9 @@ pub async fn song_waveform(
 ) -> Result<Vec<f32>, String> {
     let audio = finished_audio(&app, &service, &id)?;
     tauri::async_runtime::spawn_blocking(move || {
+        // Reading a song is quick but not free; a large library opening in the
+        // waveform view reads a couple of songs at a time.
+        let _turn = WAVEFORM_TURNS.take();
         let cache = audio.with_file_name("waveform.json");
         if let Some(peaks) = fs::read(&cache)
             .ok()
@@ -1171,7 +1262,7 @@ pub async fn song_waveform(
         {
             return Ok(peaks);
         }
-        let peaks = crate::audio::waveform(&crate::audio::decode_flac(&audio)?);
+        let peaks = crate::audio::waveform_of(&audio)?;
         let _ = fs::write(&cache, serde_json::to_vec(&peaks).unwrap_or_default());
         Ok(peaks)
     })

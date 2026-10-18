@@ -154,14 +154,13 @@ pub fn bridge_script() -> std::io::Result<tempfile::NamedTempFile> {
 pub fn bridge_command(python: &Path, script: &Path, base: &Path) -> Command {
     let mut command = Command::new(python);
     command
-        .arg("-I")
+        // -I ignores every PYTHON* variable, so these settings are flags: never write
+        // bytecode into the read-only, signed engine (-B), and speak UTF-8 on every
+        // platform (-X utf8), whatever the computer's language.
+        .args(["-I", "-B", "-X", "utf8"])
         .arg(script)
         .env("HF_HUB_OFFLINE", "1")
         .env("TRANSFORMERS_OFFLINE", "1")
-        .env("PYTHONIOENCODING", "utf-8")
-        .env("PYTHONUTF8", "1")
-        // The bundled engine is read-only and signed; never write bytecode into it.
-        .env("PYTHONDONTWRITEBYTECODE", "1")
         // GROOVE's Apple Silicon memory guard: keep PyTorch from driving the Mac into swap.
         .env("PYTORCH_MPS_HIGH_WATERMARK_RATIO", "0.8")
         .env("PYTORCH_MPS_LOW_WATERMARK_RATIO", "0.5")
@@ -266,6 +265,40 @@ mod tests {
     use super::*;
 
     const GOOD: &str = r#"{"protocolVersion":3,"event":"probe","engineVersion":"1.0.10","yueVersion":"0.1.6","device":"mps","backend":"torch"}"#;
+
+    #[test]
+    fn the_engine_never_writes_bytecode_and_always_speaks_utf8() {
+        let command = bridge_command(
+            Path::new("python3"),
+            Path::new("bridge.py"),
+            Path::new("/a"),
+        );
+        let args: Vec<_> = command.get_args().map(|a| a.to_string_lossy()).collect();
+        assert_eq!(args, ["-I", "-B", "-X", "utf8", "bridge.py"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn isolated_python_honours_the_bytecode_flag() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("probe_module.py"), "x = 1\n").unwrap();
+        let script = dir.path().join("main.py");
+        std::fs::write(
+            &script,
+            "import sys\nsys.path.insert(0, sys.argv[1])\nimport probe_module\n",
+        )
+        .unwrap();
+        let Ok(status) = bridge_command(Path::new("python3"), &script, dir.path())
+            .arg(dir.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .status()
+        else {
+            return; // No Python on this machine; the argument test above still applies.
+        };
+        assert!(status.success());
+        assert!(!dir.path().join("__pycache__").exists());
+    }
 
     #[test]
     fn a_supported_backend_makes_the_engine_ready() {

@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { displayTitle, isActive, type Song } from "../lib/songs";
 import { useFloating } from "../lib/floating";
+import { useMenuKeys } from "../lib/menuKeys";
 
 export interface SongActions {
   onAnotherVersion: (song: Song) => void;
@@ -69,6 +70,9 @@ export default function SongMenu({
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const floating = useFloating(open, ref);
+  const menu = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const keys = useMenuKeys(open, setOpen, menu, trigger);
   useEffect(() => {
     if (!open) return;
     const close = (e: MouseEvent | KeyboardEvent) => {
@@ -113,16 +117,24 @@ export default function SongMenu({
   return (
     <div className="menu-anchor" ref={ref}>
       <button
+        ref={trigger}
         className={large ? "round-button large" : "round-button"}
         aria-label={`More for ${title}`}
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen(!open)}
+        onKeyDown={keys.onTriggerKeyDown}
       >
         {vertical ? <MoreVertical size={18} /> : <MoreHorizontal size={18} />}
       </button>
       {open && (
-        <div className="menu" role="menu" style={floating}>
+        <div
+          className="menu"
+          role="menu"
+          style={floating}
+          ref={menu}
+          onKeyDown={keys.onMenuKeyDown}
+        >
           {many && (
             <p className="menu-heading">{targets.length} songs selected</p>
           )}

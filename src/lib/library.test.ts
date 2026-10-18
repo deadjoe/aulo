@@ -38,8 +38,12 @@ describe("library updates", () => {
 
   it("keeps live updates that arrived while the library was loading", () => {
     const loaded = [song("a", "running"), song("b")];
-    const live = [song("new", "queued"), song("a", "completed")];
-    const merged = mergeLoaded(loaded, live);
+    const arrived = [
+      song("a", "running"),
+      song("a", "completed"),
+      song("new", "queued"),
+    ];
+    const merged = mergeLoaded(loaded, arrived);
     expect(merged.map((s) => s.id)).toEqual(["new", "a", "b"]);
     expect(merged.find((s) => s.id === "a")?.state).toBe("completed");
   });

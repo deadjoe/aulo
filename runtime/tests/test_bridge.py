@@ -137,6 +137,21 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(commands.queue.get_nowait(), ("invalid", None))
         self.assertEqual(commands.queue.get_nowait(), ("shutdown", None))
 
+    def test_a_cancel_that_overtakes_its_song_still_stops_it(self):
+        later = "e" * 32
+        lines = [json.dumps(generate_request(BRIDGE.parent)),
+                 json.dumps({"operation": "cancel", "workId": WORK_ID})]
+        commands = bridge.Commands(io.BytesIO(("\n".join(lines) + "\n").encode()))
+        commands.start().thread.join(2)
+        self.assertEqual(commands.queue.get_nowait()[0], "generate")
+        self.assertFalse(commands.cancel.is_set())
+        commands.begin(WORK_ID)
+        self.assertTrue(commands.cancel.is_set())
+        commands.end()
+        commands.begin(later)
+        self.assertFalse(commands.cancel.is_set())
+        self.assertEqual(commands.pending_cancels, set())
+
     def fake_engine(self):
         adapter = Mock()
         adapter.load_pipeline.return_value = ("pipeline", "bfloat16")

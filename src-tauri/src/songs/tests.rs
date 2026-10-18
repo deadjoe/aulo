@@ -95,6 +95,52 @@ fn unfinished_works_are_interrupted_and_missing_audio_is_not_completed() {
     assert!(missing.audio_path.is_none());
 }
 
+/// A FLAC header for 48 kHz stereo 24-bit audio of `frames` frames.
+fn flac_header(frames: u64) -> Vec<u8> {
+    let mut bytes = b"fLaC".to_vec();
+    bytes.extend([0x80, 0, 0, 34]); // last metadata block, STREAMINFO, 34 bytes
+    bytes.extend([0x10, 0x00, 0x10, 0x00, 0, 0, 0, 0, 0, 0]);
+    // 20-bit rate, 3-bit channels - 1, 5-bit bits - 1, 36-bit frame count.
+    let packed: u64 = (48_000 << 44) | (1 << 41) | (23 << 36) | frames;
+    bytes.extend(packed.to_be_bytes());
+    bytes.extend([0; 16]);
+    bytes
+}
+
+#[test]
+fn changes_that_cannot_be_saved_are_undone() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut w = work(ID, SongState::Completed);
+    save_change(temp.path(), &mut w, |w| w.favorite = true).unwrap();
+    assert!(w.favorite);
+    // A library folder that cannot hold the record, like a full or read-only disk.
+    let blocked = temp.path().join("blocked");
+    fs::write(&blocked, b"").unwrap();
+    let error = save_change(&blocked, &mut w, |w| w.request.title = "Lost".into()).unwrap_err();
+    assert!(error.contains("couldn’t save"));
+    assert_eq!(w.request.title, "Sunday");
+    assert!(w.favorite);
+}
+
+#[test]
+fn finished_audio_whose_record_was_not_saved_is_recovered() {
+    let temp = tempfile::tempdir().unwrap();
+    let other = "fedcba9876543210fedcba9876543210";
+    for id in [ID, other] {
+        write_record(temp.path(), &work(id, SongState::Running)).unwrap();
+        fs::write(temp.path().join(id).join("audio.flac"), flac_header(96_000)).unwrap();
+    }
+    // The engine was still writing this one.
+    fs::write(temp.path().join(other).join("pending.json"), b"{}").unwrap();
+    let works = load_library(temp.path());
+    let recovered = works.iter().find(|w| w.id == ID).unwrap();
+    assert_eq!(recovered.state, SongState::Completed);
+    assert_eq!(recovered.duration, Some(2.0));
+    assert!(recovered.audio_path.is_some());
+    let unfinished = works.iter().find(|w| w.id == other).unwrap();
+    assert_eq!(unfinished.state, SongState::Interrupted);
+}
+
 #[test]
 fn completed_works_with_audio_are_playable() {
     let temp = tempfile::tempdir().unwrap();

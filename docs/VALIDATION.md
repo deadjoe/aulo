@@ -1,5 +1,17 @@
 # Validation record
 
+## Reliability review — 2026-10-19
+
+An outside review's findings were checked against the code; each was reproduced or confirmed by reading the code path before it was fixed.
+
+- Saving: user changes are undone and reported when their record cannot be written (`changes_that_cannot_be_saved_are_undone`); a song whose audio finished but whose record was not saved is restored as completed at startup (`finished_audio_whose_record_was_not_saved_is_recovered`).
+- Library refresh after setup: a hook test reproduces a song finishing while setup is open and confirms the library now shows the stored state; the test fails on the previous code.
+- Setup: "You’re all set" and Start creating appear only when the creation status (models, engine and computer) is ready.
+- Bytecode: with `-I`, `PYTHONDONTWRITEBYTECODE` was ignored and the bundled Python wrote `__pycache__` (reproduced); the engine now runs with `-B`, checked by a test that runs Python.
+- Cancel before start: reproduced with the command reader; a pending cancel is now applied when its song begins.
+- Waveforms: peaks now stream from the FLAC (equal to the full decode on a real 3:57 song, `live_waveform_streams_a_real_song`), at most two at a time, only for visible songs. Memory was reasoned from the code, not measured under a large library.
+- Accessibility: input placeholders raised from 3.5:1 to 4.8:1 contrast; menus open and move with the arrow keys, Home and End, and return focus to their button.
+
 ## Bundled engine — 2026-10-18
 
 - `scripts/build_engine.py` built a 694 MB engine (Python 3.12.9, GROOVE 1.0.10, YuE2 0.1.6, Torch 2.14.1) on Apple silicon.

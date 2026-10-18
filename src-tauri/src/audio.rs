@@ -39,29 +39,91 @@ pub fn decode_flac(path: &Path) -> Result<Pcm, String> {
     })
 }
 
+/// A finished FLAC's length in seconds, from its header; None unless it is playable.
+pub fn flac_duration(path: &Path) -> Option<f64> {
+    let reader = claxon::FlacReader::open(path).ok()?;
+    let info = reader.streaminfo();
+    let frames = info.samples.filter(|&n| n > 0)?;
+    (info.sample_rate > 0).then(|| frames as f64 / info.sample_rate as f64)
+}
+
 /// How many bars a waveform has; the interface scales them to its width.
 pub const WAVEFORM_BARS: usize = 160;
+/// Frames summarised by one block while reading; a 4-minute song is about 11,000 blocks.
+const BLOCK_FRAMES: usize = 1024;
 
-/// Peak level per slice of the song, scaled so the loudest slice is 1.0.
-pub fn waveform(pcm: &Pcm) -> Vec<f32> {
-    let channels = pcm.channels.max(1) as usize;
-    let frames = pcm.samples.len() / channels;
-    let mut peaks = vec![0f32; WAVEFORM_BARS];
-    if frames == 0 {
-        return peaks;
-    }
-    for (frame, chunk) in pcm.samples.chunks(channels).enumerate() {
-        let bar = frame * WAVEFORM_BARS / frames;
-        let level = chunk.iter().fold(0f32, |m, s| m.max(s.abs()));
-        peaks[bar] = peaks[bar].max(level);
-    }
-    let loudest = peaks.iter().copied().fold(0f32, f32::max);
-    if loudest > 0.0 {
-        for peak in &mut peaks {
-            *peak = (*peak / loudest * 1000.0).round() / 1000.0;
+/// Peak levels gathered while samples stream past, so a song is never held in memory.
+struct PeakMeter {
+    block_samples: usize,
+    seen: usize,
+    current: f32,
+    blocks: Vec<f32>,
+}
+
+impl PeakMeter {
+    fn new(channels: usize) -> Self {
+        Self {
+            block_samples: BLOCK_FRAMES * channels.max(1),
+            seen: 0,
+            current: 0.0,
+            blocks: Vec::new(),
         }
     }
-    peaks
+
+    fn push(&mut self, sample: f32) {
+        self.current = self.current.max(sample.abs());
+        self.seen += 1;
+        if self.seen == self.block_samples {
+            self.blocks.push(self.current);
+            self.seen = 0;
+            self.current = 0.0;
+        }
+    }
+
+    /// Peak level per slice of the song, scaled so the loudest slice is 1.0.
+    fn finish(mut self) -> Vec<f32> {
+        if self.seen > 0 {
+            self.blocks.push(self.current);
+        }
+        let count = self.blocks.len();
+        let mut peaks = vec![0f32; WAVEFORM_BARS];
+        if count > 0 {
+            for (bar, peak) in peaks.iter_mut().enumerate() {
+                let start = bar * count / WAVEFORM_BARS;
+                let end = ((bar + 1) * count / WAVEFORM_BARS).max(start + 1);
+                *peak = self.blocks[start..end].iter().copied().fold(0f32, f32::max);
+            }
+        }
+        let loudest = peaks.iter().copied().fold(0f32, f32::max);
+        if loudest > 0.0 {
+            for peak in &mut peaks {
+                *peak = (*peak / loudest * 1000.0).round() / 1000.0;
+            }
+        }
+        peaks
+    }
+}
+
+#[cfg(test)]
+pub fn waveform(pcm: &Pcm) -> Vec<f32> {
+    let mut meter = PeakMeter::new(pcm.channels as usize);
+    pcm.samples.iter().for_each(|&s| meter.push(s));
+    meter.finish()
+}
+
+/// A song's waveform, read straight from its FLAC file.
+pub fn waveform_of(path: &Path) -> Result<Vec<f32>, String> {
+    let mut reader = claxon::FlacReader::open(path).map_err(|e| e.to_string())?;
+    let info = reader.streaminfo();
+    if info.channels == 0 || info.channels > 2 || info.sample_rate == 0 {
+        return Err("unsupported audio layout".into());
+    }
+    let scale = (1u64 << (info.bits_per_sample - 1)) as f32;
+    let mut meter = PeakMeter::new(info.channels as usize);
+    for sample in reader.samples() {
+        meter.push(sample.map_err(|e| e.to_string())? as f32 / scale);
+    }
+    Ok(meter.finish())
 }
 
 /// 24-bit PCM WAV keeps the model's output precision for editing.
@@ -191,11 +253,25 @@ mod tests {
         .all(|b| *b == 0.0));
     }
 
+    /// AULO_LIVE_FLAC=/path/to/audio.flac cargo test live_waveform -- --ignored
+    #[test]
+    #[ignore]
+    fn live_waveform_streams_a_real_song() {
+        let path = std::path::PathBuf::from(std::env::var("AULO_LIVE_FLAC").unwrap());
+        let pcm = decode_flac(&path).unwrap();
+        assert_eq!(waveform_of(&path).unwrap(), waveform(&pcm));
+        let frames = pcm.samples.len() / pcm.channels as usize;
+        let expected = frames as f64 / pcm.sample_rate as f64;
+        assert!((flac_duration(&path).unwrap() - expected).abs() < 1e-6);
+    }
+
     #[test]
     fn corrupt_flac_is_an_error_not_silence() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("bad.flac");
         std::fs::write(&path, b"not flac").unwrap();
         assert!(decode_flac(&path).is_err());
+        assert!(waveform_of(&path).is_err());
+        assert!(flac_duration(&path).is_none());
     }
 }
