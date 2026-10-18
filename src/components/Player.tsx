@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Heart,
   Pause,
@@ -22,7 +22,10 @@ export function usePlayer(songs: Song[]) {
   const [error, setError] = useState("");
   // Songs the listener asked to hear next, before the library order resumes.
   const [queue, setQueue] = useState<string[]>([]);
-  const playable = songs.filter((s) => s.state === "completed" && s.audioPath);
+  const playable = useMemo(
+    () => songs.filter((s) => s.state === "completed" && s.audioPath),
+    [songs],
+  );
   const current = songs.find((s) => s.id === currentId) ?? null;
 
   if (!audio.current && typeof Audio !== "undefined")

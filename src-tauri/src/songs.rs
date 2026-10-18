@@ -74,6 +74,18 @@ pub struct Progress {
     pub total: u32,
 }
 
+/// Where a song is in its life. Serialized in lowercase in `aulo.json` and to the UI.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SongState {
+    Queued,
+    Running,
+    Completed,
+    Failed,
+    Cancelled,
+    Interrupted,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Work {
@@ -81,8 +93,7 @@ pub struct Work {
     pub created_ms: u64,
     pub request: SongRequest,
     pub favorite: bool,
-    /// queued | running | completed | failed | cancelled | interrupted
-    pub state: String,
+    pub state: SongState,
     #[serde(default)]
     pub stage: Option<String>,
     #[serde(default)]
@@ -99,7 +110,7 @@ pub struct Work {
 
 impl Work {
     fn active(&self) -> bool {
-        matches!(self.state.as_str(), "queued" | "running")
+        matches!(self.state, SongState::Queued | SongState::Running)
     }
 }
 
@@ -152,18 +163,18 @@ pub fn load_library(root: &Path) -> Vec<Work> {
             continue;
         }
         if work.active() {
-            work.state = "interrupted".into();
+            work.state = SongState::Interrupted;
             work.stage = None;
             work.progress = None;
             work.message = Some("Aulo closed before this song was finished.".into());
             let _ = write_record(root, &work);
         }
-        if work.state == "completed" {
+        if work.state == SongState::Completed {
             let audio = entry.path().join("audio.flac");
             if audio.is_file() && !entry.path().join("pending.json").exists() {
                 work.audio_path = Some(audio.to_string_lossy().into_owned());
             } else {
-                work.state = "failed".into();
+                work.state = SongState::Failed;
                 work.audio_path = None;
                 work.message = Some("This song's audio file is missing.".into());
             }
@@ -242,7 +253,7 @@ pub fn apply_event(work: &mut Work, event: &EngineEvent, folder: &Path) -> bool 
             {
                 return false;
             }
-            work.state = "completed".into();
+            work.state = SongState::Completed;
             work.duration = Some(result.duration);
             work.audio_path = Some(audio.to_string_lossy().into_owned());
             work.stage = None;
@@ -251,13 +262,13 @@ pub fn apply_event(work: &mut Work, event: &EngineEvent, folder: &Path) -> bool 
             true
         }
         "cancelled" => {
-            work.state = "cancelled".into();
+            work.state = SongState::Cancelled;
             work.stage = None;
             work.progress = None;
             true
         }
         "failed" => {
-            work.state = "failed".into();
+            work.state = SongState::Failed;
             work.stage = None;
             work.progress = None;
             work.message = Some("This song could not be finished. Try creating it again.".into());
@@ -265,6 +276,26 @@ pub fn apply_event(work: &mut Work, event: &EngineEvent, folder: &Path) -> bool 
         }
         _ => false,
     }
+}
+
+/// Settle a song once its engine run is over. A song the engine already finished is
+/// left alone; one still marked active ended without a result.
+pub fn finish(work: &mut Work, result: &Result<(), String>, cancelled: bool) {
+    if !work.active() {
+        return;
+    }
+    if cancelled {
+        work.state = SongState::Cancelled;
+        work.message = None;
+    } else {
+        work.state = SongState::Failed;
+        work.message = Some(match result {
+            Ok(()) => "This song could not be finished. Try creating it again.".into(),
+            Err(message) => message.clone(),
+        });
+    }
+    work.stage = None;
+    work.progress = None;
 }
 
 #[derive(Default)]
@@ -409,28 +440,7 @@ impl SongService {
                 state.current = None;
                 state.cancel_id.take().is_some_and(|c| c == id)
             };
-            self.update(&app, &id, true, |work| {
-                if work.active() {
-                    match &result {
-                        _ if cancelled => {
-                            work.state = "cancelled".into();
-                            work.message = None;
-                        }
-                        Ok(()) => {
-                            work.state = "failed".into();
-                            work.message = Some(
-                                "This song could not be finished. Try creating it again.".into(),
-                            );
-                        }
-                        Err(message) => {
-                            work.state = "failed".into();
-                            work.message = Some(message.clone());
-                        }
-                    }
-                    work.stage = None;
-                    work.progress = None;
-                }
-            });
+            self.update(&app, &id, true, |work| finish(work, &result, cancelled));
         }
     }
 
@@ -468,13 +478,13 @@ impl SongService {
                 .iter()
                 .find(|w| w.id == id)
                 .ok_or("Missing work")?;
-            if work.state != "queued" {
+            if work.state != SongState::Queued {
                 return Ok(());
             }
             work.request.clone()
         };
         self.update(app, id, true, |work| {
-            work.state = "running".into();
+            work.state = SongState::Running;
             work.stage = Some("preparing".into());
             work.started_ms = Some(now_ms());
         });
@@ -654,7 +664,7 @@ pub fn create_song(
         created_ms: now_ms(),
         request,
         favorite: false,
-        state: "queued".into(),
+        state: SongState::Queued,
         stage: None,
         progress: None,
         started_ms: None,
@@ -690,7 +700,7 @@ pub fn cancel_song(
     }
     if queued {
         service.update(&app, &id, true, |work| {
-            work.state = "cancelled".into();
+            work.state = SongState::Cancelled;
         });
     } else {
         service.request_cancel(&id);
@@ -736,7 +746,7 @@ fn finished_audio(
         state
             .works
             .iter()
-            .find(|w| w.id == id && w.state == "completed")
+            .find(|w| w.id == id && w.state == SongState::Completed)
             .map(|_| root.join(id).join("audio.flac"))
             .filter(|path| path.is_file())
             .ok_or_else(|| "This song has no audio yet.".to_string())
@@ -895,19 +905,18 @@ pub fn trash_song(
     }
     let root = library_root(&app)?;
     service.with_state(&app, |state| {
-        let work = state
-            .works
-            .iter()
-            .find(|w| w.id == id)
-            .ok_or("Unknown song.")?;
-        if work.active() {
-            return Err("Stop this song before moving it to the Trash.".to_string());
+        match state.works.iter().find(|w| w.id == id) {
+            None => Err("Unknown song.".to_string()),
+            Some(work) if work.active() => {
+                Err("Stop this song before moving it to the Trash.".to_string())
+            }
+            Some(_) => Ok(()),
         }
-        trash::delete(root.join(&id))
-            .map_err(|_| "This song could not be moved to the Trash.".to_string())?;
-        state.works.retain(|w| w.id != id);
-        Ok(())
-    })?
+    })??;
+    // The system trash can be slow; keep the library unlocked meanwhile.
+    trash::delete(root.join(&id))
+        .map_err(|_| "This song could not be moved to the Trash.".to_string())?;
+    service.with_state(&app, |state| state.works.retain(|w| w.id != id))
 }
 
 #[cfg(test)]

@@ -12,13 +12,13 @@ fn request() -> SongRequest {
     }
 }
 
-fn work(id: &str, state: &str) -> Work {
+fn work(id: &str, state: SongState) -> Work {
     Work {
         id: id.into(),
         created_ms: 1,
         request: request(),
         favorite: false,
-        state: state.into(),
+        state,
         stage: None,
         progress: None,
         started_ms: None,
@@ -63,25 +63,25 @@ fn ids_are_random_lowercase_hex() {
 fn unfinished_works_are_interrupted_and_missing_audio_is_not_completed() {
     let temp = tempfile::tempdir().unwrap();
     let other = "fedcba9876543210fedcba9876543210";
-    write_record(temp.path(), &work(ID, "running")).unwrap();
-    write_record(temp.path(), &work(other, "completed")).unwrap();
+    write_record(temp.path(), &work(ID, SongState::Running)).unwrap();
+    write_record(temp.path(), &work(other, SongState::Completed)).unwrap();
     fs::create_dir_all(temp.path().join("not-a-work")).unwrap();
     let works = load_library(temp.path());
     assert_eq!(works.len(), 2);
     let interrupted = works.iter().find(|w| w.id == ID).unwrap();
-    assert_eq!(interrupted.state, "interrupted");
+    assert_eq!(interrupted.state, SongState::Interrupted);
     let reloaded: Work =
         serde_json::from_slice(&fs::read(temp.path().join(ID).join(RECORD)).unwrap()).unwrap();
-    assert_eq!(reloaded.state, "interrupted");
+    assert_eq!(reloaded.state, SongState::Interrupted);
     let missing = works.iter().find(|w| w.id == other).unwrap();
-    assert_eq!(missing.state, "failed");
+    assert_eq!(missing.state, SongState::Failed);
     assert!(missing.audio_path.is_none());
 }
 
 #[test]
 fn completed_works_with_audio_are_playable() {
     let temp = tempfile::tempdir().unwrap();
-    write_record(temp.path(), &work(ID, "completed")).unwrap();
+    write_record(temp.path(), &work(ID, SongState::Completed)).unwrap();
     fs::write(temp.path().join(ID).join("audio.flac"), b"fixture").unwrap();
     let works = load_library(temp.path());
     assert!(works[0]
@@ -95,7 +95,7 @@ fn completed_works_with_audio_are_playable() {
 fn events_update_progress_and_completion_requires_real_audio() {
     let temp = tempfile::tempdir().unwrap();
     let folder = temp.path();
-    let mut w = work(ID, "running");
+    let mut w = work(ID, SongState::Running);
     let progress = parse_event(
         br#"{"protocolVersion":3,"event":"progress","stage":"rendering","completed":3,"total":32}"#,
     )
@@ -117,13 +117,13 @@ fn events_update_progress_and_completion_requires_real_audio() {
     )
     .unwrap();
     assert!(!apply_event(&mut w, &done, folder));
-    assert_eq!(w.state, "running");
+    assert_eq!(w.state, SongState::Running);
     fs::write(folder.join("audio.flac"), b"fixture").unwrap();
     fs::write(folder.join("pending.json"), b"{}").unwrap();
     assert!(!apply_event(&mut w, &done, folder));
     fs::remove_file(folder.join("pending.json")).unwrap();
     assert!(apply_event(&mut w, &done, folder));
-    assert_eq!(w.state, "completed");
+    assert_eq!(w.state, SongState::Completed);
     assert_eq!(w.duration, Some(61.5));
     assert!(parse_event(br#"{"protocolVersion":2,"event":"failed"}"#).is_none());
 }
@@ -273,13 +273,19 @@ fn live_song(live: &Live, cancel_at: Option<&str>) -> (Vec<EngineEvent>, PathBuf
 fn live_resident_engine_generates_and_reuses_the_model() {
     let live = live_engine();
     let (events, folder, first) = live_song(&live, None);
-    let mut w = work(folder.file_name().unwrap().to_str().unwrap(), "running");
+    let mut w = work(
+        folder.file_name().unwrap().to_str().unwrap(),
+        SongState::Running,
+    );
     assert!(apply_event(&mut w, events.last().unwrap(), &folder));
-    assert_eq!(w.state, "completed");
+    assert_eq!(w.state, SongState::Completed);
     let (events, _, cancelled) = live_song(&live, Some("performing"));
     assert_eq!(events.last().unwrap().event, "cancelled");
     let (events, folder, second) = live_song(&live, None);
-    let mut w = work(folder.file_name().unwrap().to_str().unwrap(), "running");
+    let mut w = work(
+        folder.file_name().unwrap().to_str().unwrap(),
+        SongState::Running,
+    );
     assert!(apply_event(&mut w, events.last().unwrap(), &folder));
     eprintln!("first {first:.1}s, cancelled after {cancelled:.1}s, second {second:.1}s");
     live.process.shutdown(Duration::from_secs(20));
@@ -340,4 +346,42 @@ fn live_exports_every_format() {
         eprintln!("{format:?}: {size} bytes in {:?}", started.elapsed());
         assert!(size > 100_000);
     }
+}
+
+#[test]
+fn finishing_settles_only_songs_the_engine_left_active() {
+    let mut done = work(ID, SongState::Completed);
+    finish(&mut done, &Err("boom".into()), false);
+    assert_eq!(done.state, SongState::Completed);
+
+    let mut stopped = work(ID, SongState::Running);
+    stopped.stage = Some("performing".into());
+    finish(&mut stopped, &Err("closed".into()), true);
+    assert_eq!(stopped.state, SongState::Cancelled);
+    assert!(stopped.stage.is_none() && stopped.message.is_none());
+
+    let mut crashed = work(ID, SongState::Running);
+    finish(
+        &mut crashed,
+        &Err("The music engine stopped unexpectedly.".into()),
+        false,
+    );
+    assert_eq!(crashed.state, SongState::Failed);
+    assert_eq!(
+        crashed.message.as_deref(),
+        Some("The music engine stopped unexpectedly.")
+    );
+
+    let mut silent = work(ID, SongState::Running);
+    finish(&mut silent, &Ok(()), false);
+    assert_eq!(silent.state, SongState::Failed);
+    assert!(silent.message.is_some());
+}
+
+#[test]
+fn song_state_keeps_its_lowercase_file_format() {
+    let json = serde_json::to_value(work(ID, SongState::Interrupted)).unwrap();
+    assert_eq!(json["state"], "interrupted");
+    let parsed: Work = serde_json::from_value(json).unwrap();
+    assert_eq!(parsed.state, SongState::Interrupted);
 }

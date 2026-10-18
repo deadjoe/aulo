@@ -36,17 +36,33 @@ impl EngineStatus {
     }
 }
 
-/// The last successful probe. Failures are not cached so the next check retries.
+/// The last probe. Ready and unsupported results last for the session; other results
+/// are retried, but not more often than `RETRY_AFTER`, since a probe imports PyTorch.
 #[derive(Default)]
-pub struct EngineCache(Mutex<Option<EngineStatus>>);
+pub struct EngineCache(Mutex<Option<(EngineStatus, Instant)>>);
+
+const RETRY_AFTER: Duration = Duration::from_secs(60);
 
 impl EngineCache {
     pub fn ready(&self) -> Option<EngineStatus> {
         self.0
             .lock()
             .unwrap()
-            .clone()
+            .as_ref()
+            .map(|(s, _)| s.clone())
             .filter(|s| s.generation_ready)
+    }
+
+    /// A result that is still good to reuse, if there is one.
+    pub fn reusable(&self, now: Instant) -> Option<EngineStatus> {
+        let cached = self.0.lock().unwrap();
+        let (status, at) = cached.as_ref()?;
+        let lasting = matches!(status.state, "ready" | "unsupported");
+        (lasting || now.duration_since(*at) < RETRY_AFTER).then(|| status.clone())
+    }
+
+    pub fn store(&self, status: EngineStatus, at: Instant) {
+        *self.0.lock().unwrap() = Some((status, at));
     }
 }
 
@@ -206,16 +222,15 @@ pub fn inspect(base: &Path) -> EngineStatus {
 
 #[tauri::command]
 pub async fn engine_status(app: tauri::AppHandle) -> Result<EngineStatus, String> {
-    // A ready or unsupported result cannot change while Aulo runs; other states are retried.
-    let cached = app.state::<EngineCache>().0.lock().unwrap().clone();
-    if let Some(status) = cached.filter(|s| matches!(s.state, "ready" | "unsupported")) {
+    if let Some(status) = app.state::<EngineCache>().reusable(Instant::now()) {
         return Ok(status);
     }
     let base = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let status = tauri::async_runtime::spawn_blocking(move || inspect(&base))
         .await
         .map_err(|e| e.to_string())?;
-    *app.state::<EngineCache>().0.lock().unwrap() = Some(status.clone());
+    app.state::<EngineCache>()
+        .store(status.clone(), Instant::now());
     Ok(status)
 }
 
@@ -254,6 +269,23 @@ mod tests {
         ] {
             assert!(parse_probe(bad.as_bytes()).is_err());
         }
+    }
+
+    #[test]
+    fn probe_results_are_reused_without_hiding_recovery_for_long() {
+        let cache = EngineCache::default();
+        let start = Instant::now();
+        assert!(cache.reusable(start).is_none());
+        cache.store(EngineStatus::unavailable("unavailable", "not yet"), start);
+        assert!(cache.reusable(start + Duration::from_secs(5)).is_some());
+        assert!(cache.reusable(start + RETRY_AFTER).is_none());
+        assert!(cache.ready().is_none());
+        let ready = parse_probe(GOOD.as_bytes()).unwrap();
+        cache.store(ready, start);
+        assert!(cache
+            .reusable(start + Duration::from_secs(86_400))
+            .is_some());
+        assert!(cache.ready().is_some());
     }
 
     #[cfg(unix)]

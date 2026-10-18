@@ -39,6 +39,7 @@ export default function ModelsPanel() {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
     async function poll() {
+      let busy = false;
       try {
         const [nextPlan, nextStatus] = await Promise.all([
           getModelPlan(),
@@ -47,12 +48,14 @@ export default function ModelsPanel() {
         if (!cancelled) {
           setPlan(nextPlan);
           setStatus(nextStatus);
+          busy = modelOperationActive(nextStatus);
           if (!modelOperationActive(nextStatus)) setPauseRequested(false);
         }
       } catch (e) {
         if (!cancelled) setError(String(e));
       }
-      if (!cancelled) timer = setTimeout(() => void poll(), 1000);
+      // Live progress while preparing; an occasional check otherwise.
+      if (!cancelled) timer = setTimeout(() => void poll(), busy ? 1000 : 4000);
     }
     void poll();
     return () => {
