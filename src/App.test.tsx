@@ -337,6 +337,38 @@ describe("library", () => {
     ).toBeVisible();
   });
 
+  it("says so when only some songs reach the Trash", async () => {
+    vi.mocked(songs.listSongs).mockResolvedValue([
+      song({ request: { ...song().request, title: "Sunday" } }),
+      song({
+        id: "fedcba9876543210fedcba9876543210",
+        request: { ...song().request, title: "Monday" },
+      }),
+    ]);
+    vi.mocked(songs.trashSongs).mockResolvedValueOnce([
+      "0123456789abcdef0123456789abcdef",
+    ]);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(
+      await screen.findByRole("checkbox", { name: "Select Sunday" }),
+    );
+    await user.click(screen.getByRole("checkbox", { name: "Select Monday" }));
+    await user.click(screen.getByRole("button", { name: "More for Monday" }));
+    await user.click(screen.getByRole("menuitem", { name: /Move to Trash/ }));
+    await user.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Move to Trash",
+      }),
+    );
+    expect(
+      await screen.findByText(
+        "Moved “Sunday” to the Trash. 1 song couldn’t be moved; try again.",
+      ),
+    ).toBeVisible();
+    expect(screen.queryByText("Moved 2 songs to the Trash.")).toBeNull();
+  });
+
   it("moves songs to another workspace and filters the list", async () => {
     vi.mocked(songs.listCollections).mockResolvedValue({
       workspaces: [

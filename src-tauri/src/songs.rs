@@ -690,6 +690,16 @@ pub struct CreationStatus {
 
 #[tauri::command]
 pub async fn creation_status(app: tauri::AppHandle) -> Result<CreationStatus, String> {
+    let hardware = tauri::async_runtime::spawn_blocking(crate::creation_hardware_blocker)
+        .await
+        .map_err(|e| e.to_string())?;
+    if let Some(message) = hardware {
+        return Ok(CreationStatus {
+            ready: false,
+            blocker: "unsupported",
+            message: message.into(),
+        });
+    }
     let models_ready = models::verified_root(&app, &app.state::<models::ModelManager>()).is_some();
     let engine = engine::engine_status(app.clone()).await?;
     Ok(if !models_ready {

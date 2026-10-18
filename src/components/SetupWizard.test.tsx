@@ -36,6 +36,25 @@ describe("the last setup step", () => {
     ).toBeEnabled();
   });
 
+  it("says when the computer rules creating out, even with the models ready", async () => {
+    vi.mocked(creationStatus).mockResolvedValue({
+      ready: false,
+      blocker: "unsupported",
+      message:
+        "Aulo needs a Mac with Apple silicon and at least 32 GB of memory to make music.",
+    });
+    render(<SetupWizard onExplore={() => undefined} initialStep={2} />);
+    expect(
+      await screen.findByRole("heading", {
+        name: "Aulo can’t make songs here yet",
+      }),
+    ).toBeVisible();
+    expect(screen.getByText(/at least 32 GB of memory/)).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: /Start creating/ }),
+    ).not.toBeInTheDocument();
+  });
+
   it("offers Start creating only when everything is ready", async () => {
     vi.mocked(creationStatus).mockResolvedValue({
       ready: true,
