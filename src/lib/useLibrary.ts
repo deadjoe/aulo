@@ -10,6 +10,7 @@ import {
   type Song,
   type SongRequest,
 } from "./songs";
+import { finishedNotice, onSongsRemoved } from "./settings";
 
 /** Insert or replace one song, keeping the list newest first. */
 export function upsert(list: Song[], song: Song): Song[] {
@@ -30,8 +31,18 @@ export function mergeLoaded(loaded: Song[], arrived: Song[]): Song[] {
 }
 
 /** The person's songs, kept current by the native song service. */
-export function useLibrary(enabled: boolean, onError: (text: string) => void) {
+export function useLibrary(
+  enabled: boolean,
+  onError: (text: string) => void,
+  onFinished?: (notice: { title: string; body: string }) => void,
+) {
   const [songs, setSongs] = useState<Song[]>([]);
+  // The latest list and callback, for event handlers that outlive a render.
+  const current = useRef(songs);
+  current.current = songs;
+  const finished = useRef(onFinished);
+  finished.current = onFinished;
+  const notified = useRef(new Set<string>());
   const [collections, setCollections] =
     useState<Collections>(EMPTY_COLLECTIONS);
   // Updates received since the current load began, oldest first.
@@ -48,6 +59,14 @@ export function useLibrary(enabled: boolean, onError: (text: string) => void) {
       () => undefined,
     );
     const stop = onSongUpdated((song) => {
+      const notice = finishedNotice(
+        current.current.find((s) => s.id === song.id),
+        song,
+      );
+      if (notice && !notified.current.has(song.id)) {
+        notified.current.add(song.id);
+        finished.current?.(notice);
+      }
       if (loading) received.push(song);
       setSongs((list) => upsert(list, song));
     });
@@ -62,9 +81,13 @@ export function useLibrary(enabled: boolean, onError: (text: string) => void) {
         active &&
         onError("Your songs couldn’t be loaded. Reopen Aulo to try again."),
     );
+    const stopRemoved = onSongsRemoved((ids) =>
+      setSongs((list) => list.filter((s) => !ids.includes(s.id))),
+    );
     return () => {
       active = false;
       arrived.current = null;
+      stopRemoved();
       stop();
       stopCollections();
     };

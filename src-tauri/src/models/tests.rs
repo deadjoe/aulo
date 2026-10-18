@@ -296,3 +296,45 @@ fn unchanged_verified_models_stay_ready_after_restart_and_changes_require_checks
     assert_eq!(state.phase, "unverified");
     assert!(!state.models_verified);
 }
+
+#[test]
+fn removing_models_deletes_only_aulos_own_folder() {
+    let base = tempfile::tempdir().unwrap();
+    let own = base.path().join("models").join("test-v1").join("YuE2-3B");
+    fs::create_dir_all(&own).unwrap();
+    fs::write(own.join("model.safetensors"), b"weights").unwrap();
+    fs::create_dir_all(base.path().join("models").join("gguf")).unwrap();
+    save_selection(base.path(), &own, "test-v1").unwrap();
+    // Songs live beside the models and must survive.
+    fs::create_dir_all(base.path().join("library")).unwrap();
+    assert_eq!(remove_model_files(base.path()).unwrap(), None);
+    assert!(!base.path().join("models").exists());
+    assert!(!base.path().join("models.json").exists());
+    assert!(base.path().join("library").exists());
+    // Nothing left to remove is not an error.
+    assert_eq!(remove_model_files(base.path()).unwrap(), None);
+}
+
+#[test]
+fn removing_models_never_touches_a_folder_the_person_chose() {
+    let base = tempfile::tempdir().unwrap();
+    let theirs = tempfile::tempdir().unwrap();
+    fs::write(theirs.path().join("model.safetensors"), b"weights").unwrap();
+    save_selection(base.path(), theirs.path(), "test-v1").unwrap();
+    let kept = remove_model_files(base.path()).unwrap();
+    assert_eq!(kept.as_deref(), Some(theirs.path()));
+    assert!(theirs.path().join("model.safetensors").exists());
+    assert!(!base.path().join("models.json").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn removing_models_does_not_follow_a_link_out_of_aulos_folder() {
+    let base = tempfile::tempdir().unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    fs::write(elsewhere.path().join("keep.txt"), b"mine").unwrap();
+    std::os::unix::fs::symlink(elsewhere.path(), base.path().join("models")).unwrap();
+    remove_model_files(base.path()).unwrap();
+    assert!(!base.path().join("models").exists());
+    assert!(elsewhere.path().join("keep.txt").exists());
+}

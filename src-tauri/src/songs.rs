@@ -27,7 +27,6 @@ const ENGINE_START: Duration = Duration::from_secs(180);
 /// Every stage reports at least every 100 tokens or render step; silence this long is a hang.
 const ENGINE_WATCHDOG: Duration = Duration::from_secs(600);
 /// After this long without songs, the engine exits and returns its memory.
-const ENGINE_IDLE: Duration = Duration::from_secs(600);
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -356,6 +355,10 @@ struct State {
     child: Option<Arc<Mutex<Child>>>,
     worker: bool,
     stopping: bool,
+    /// Keep the engine loaded between songs until Aulo quits (Settings › Creating).
+    keep_loaded: bool,
+    /// Unload the engine as soon as it is idle (Settings › Free up memory now).
+    release: bool,
 }
 
 #[derive(Clone, Default)]
@@ -402,6 +405,8 @@ impl SongService {
             }
             state.works = works;
             state.loaded = true;
+            state.keep_loaded =
+                crate::settings::current(app).keep_ready == crate::settings::KeepReady::Faster;
         }
         Ok(f(&mut state))
     }
@@ -473,6 +478,45 @@ impl SongService {
         }
     }
 
+    /// A copy of every song record.
+    pub fn works(&self, app: &tauri::AppHandle) -> Result<Vec<Work>, String> {
+        self.with_state(app, |state| state.works.clone())
+    }
+
+    /// Apply Settings choices that affect the running service.
+    pub fn apply_settings(&self, settings: &crate::settings::Settings) {
+        let mut state = self.0 .0.lock().unwrap();
+        state.keep_loaded = settings.keep_ready == crate::settings::KeepReady::Faster;
+        drop(state);
+        self.0 .1.notify_all();
+    }
+
+    /// Whether the engine holds memory, and whether it is making a song.
+    fn engine_state(&self) -> EngineMemory {
+        let state = self.0 .0.lock().unwrap();
+        EngineMemory {
+            loaded: state.child.is_some(),
+            busy: state.current.is_some() || !state.queue.is_empty(),
+        }
+    }
+
+    /// Delete songs that have stayed in Aulo's Trash longer than Settings allows.
+    pub fn empty_expired_trash(&self, app: &tauri::AppHandle) {
+        let Some(days) = crate::settings::current(app).empty_trash_after_days else {
+            return;
+        };
+        let Ok(expired) = self.with_state(app, |state| expired_trash(&state.works, now_ms(), days))
+        else {
+            return;
+        };
+        if expired.is_empty() {
+            return;
+        }
+        if let Ok(deleted) = delete_trashed(app, self, &expired) {
+            let _ = app.emit("songs-removed", deleted);
+        }
+    }
+
     fn forget_engine(&self) {
         let mut state = self.0 .0.lock().unwrap();
         state.input = None;
@@ -492,14 +536,18 @@ impl SongService {
                     if let Some(id) = state.queue.pop_front() {
                         break Some(id);
                     }
-                    if engine.is_none() {
-                        state = wake.wait(state).unwrap();
-                        continue;
-                    }
-                    let (guard, waited) = wake.wait_timeout(state, ENGINE_IDLE).unwrap();
-                    state = guard;
-                    if waited.timed_out() && state.queue.is_empty() {
-                        break None;
+                    let decision = idle_wait(engine.is_some(), state.release, state.keep_loaded);
+                    state.release = false;
+                    match decision {
+                        IdleWait::Unload => break None,
+                        IdleWait::UntilWoken => state = wake.wait(state).unwrap(),
+                        IdleWait::For(idle) => {
+                            let (guard, waited) = wake.wait_timeout(state, idle).unwrap();
+                            state = guard;
+                            if waited.timed_out() && state.queue.is_empty() {
+                                break None;
+                            }
+                        }
                     }
                 }
             };
@@ -732,7 +780,97 @@ pub fn list_songs(
     app: tauri::AppHandle,
     service: tauri::State<SongService>,
 ) -> Result<Vec<Work>, String> {
+    service.empty_expired_trash(&app);
     service.with_state(&app, |state| state.works.clone())
+}
+
+/// How long the engine stays loaded after the last song; None until Aulo quits.
+fn idle_limit(keep_loaded: bool) -> Option<Duration> {
+    let choice = if keep_loaded {
+        crate::settings::KeepReady::Faster
+    } else {
+        crate::settings::KeepReady::SaveMemory
+    };
+    choice.idle_limit()
+}
+
+/// What the idle engine loop does next, with no song waiting.
+#[derive(Debug, PartialEq)]
+enum IdleWait {
+    /// Unload the engine now and give its memory back.
+    Unload,
+    /// Sleep until a song, a setting change or a release request arrives.
+    UntilWoken,
+    /// Unload unless something arrives within this time.
+    For(Duration),
+}
+
+fn idle_wait(loaded: bool, release: bool, keep_loaded: bool) -> IdleWait {
+    match (loaded, release, idle_limit(keep_loaded)) {
+        (false, _, _) => IdleWait::UntilWoken,
+        (true, true, _) => IdleWait::Unload,
+        (true, false, None) => IdleWait::UntilWoken,
+        (true, false, Some(idle)) => IdleWait::For(idle),
+    }
+}
+
+/// Songs in the Trash for at least `days` days.
+fn expired_trash(works: &[Work], now: u64, days: u32) -> Vec<String> {
+    let limit = u64::from(days) * 24 * 60 * 60 * 1000;
+    works
+        .iter()
+        .filter(|w| w.trashed_ms.is_some_and(|t| now.saturating_sub(t) >= limit))
+        .map(|w| w.id.clone())
+        .collect()
+}
+
+#[derive(Serialize)]
+pub struct EngineMemory {
+    loaded: bool,
+    busy: bool,
+}
+
+#[tauri::command]
+pub fn engine_memory(service: tauri::State<SongService>) -> EngineMemory {
+    service.engine_state()
+}
+
+impl SongService {
+    /// Stop the engine and wait until it has gone; refused while songs are being made.
+    pub fn unload_engine(&self) -> Result<(), String> {
+        {
+            let mut state = self.0 .0.lock().unwrap();
+            if state.current.is_some() || !state.queue.is_empty() {
+                return Err("Stop the songs being made first.".into());
+            }
+            if state.child.is_none() {
+                return Ok(());
+            }
+            state.release = true;
+        }
+        self.0 .1.notify_all();
+        let started = std::time::Instant::now();
+        while self.0 .0.lock().unwrap().child.is_some() {
+            if started.elapsed() > Duration::from_secs(20) {
+                return Err("The music engine is still stopping. Try again in a moment.".into());
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        Ok(())
+    }
+}
+
+/// Settings › Free up memory now: unload the engine if no song is being made.
+#[tauri::command]
+pub fn release_engine(service: tauri::State<SongService>) -> Result<(), String> {
+    let mut state = service.0 .0.lock().unwrap();
+    if state.current.is_some() || !state.queue.is_empty() {
+        return Err("Aulo is making a song. Memory is freed after it finishes.".into());
+    }
+    state.release = true;
+    drop(state);
+    service.0 .1.notify_all();
+    Ok(())
 }
 
 #[tauri::command]
@@ -981,16 +1119,6 @@ pub fn reveal_song(
         .map_err(|_| "The song's folder could not be opened.".into())
 }
 
-#[tauri::command]
-pub fn reveal_library(app: tauri::AppHandle) -> Result<(), String> {
-    use tauri_plugin_opener::OpenerExt;
-    let root = library_root(&app)?;
-    fs::create_dir_all(&root).map_err(|e| e.to_string())?;
-    app.opener()
-        .open_path(root.to_string_lossy(), None::<&str>)
-        .map_err(|_| "The songs folder could not be opened.".into())
-}
-
 /// Put songs in Aulo's Trash, or take them out again. Songs being made cannot be trashed.
 #[tauri::command]
 pub fn trash_songs(
@@ -1038,8 +1166,21 @@ pub fn delete_songs(
     if ids.iter().any(|id| !valid_id(id)) {
         return Err("Unknown song.".into());
     }
-    let root = library_root(&app)?;
-    let deletable: Vec<String> = service.with_state(&app, |state| {
+    let deleted = delete_trashed(&app, &service, &ids)?;
+    if deleted.len() < ids.len() {
+        return Err("Some songs could not be deleted.".into());
+    }
+    Ok(deleted)
+}
+
+/// Send songs that are in Aulo's Trash to the computer's trash, and forget them.
+fn delete_trashed(
+    app: &tauri::AppHandle,
+    service: &SongService,
+    ids: &[String],
+) -> Result<Vec<String>, String> {
+    let root = library_root(app)?;
+    let deletable: Vec<String> = service.with_state(app, |state| {
         state
             .works
             .iter()
@@ -1052,15 +1193,12 @@ pub fn delete_songs(
         .into_iter()
         .filter(|id| trash::delete(root.join(id)).is_ok())
         .collect();
-    service.with_state(&app, |state| -> Result<(), String> {
+    service.with_state(app, |state| -> Result<(), String> {
         state.works.retain(|w| !deleted.contains(&w.id));
         state.collections.forget_songs(&deleted);
         state.collections.save(&root)
     })??;
-    SongService::publish_collections(&app, &service);
-    if deleted.len() < ids.len() {
-        return Err("Some songs could not be deleted.".into());
-    }
+    SongService::publish_collections(app, service);
     Ok(deleted)
 }
 

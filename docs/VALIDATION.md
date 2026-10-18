@@ -1,5 +1,11 @@
 # Validation record
 
+## Settings — 2026-10-19
+
+- Native tests: settings defaults, damaged and out-of-range files, round trip; the idle-engine decision (keep loaded, unload after 10 minutes, unload now); Trash expiry including a clock set back; model removal deletes only Aulo's folder, keeps a chosen folder and does not follow a link; storage separates songs from the Trash and does not follow links; the problem report removes written lines and states what it leaves out.
+- Component tests: every section; saving a choice and putting it back when saving fails; Free up memory only while memory is held and nothing is being made; Empty Trash and Remove only after an in-panel confirmation; the problem report saved where chosen; one notification per finished song and none for songs already done; ⌘, and Escape.
+- A read-only check on a real data folder matched song and Trash counts and sizes to the records. The panel was reviewed in a browser preview with temporary fixtures, which were removed. System notifications, the engine unloading in the running app and model removal on a real installation were not exercised by hand.
+
 ## Reliability review — 2026-10-19
 
 An outside review's findings were checked against the code; each was reproduced or confirmed by reading the code path before it was fixed.

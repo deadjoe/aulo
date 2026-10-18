@@ -108,6 +108,40 @@ fn flac_header(frames: u64) -> Vec<u8> {
 }
 
 #[test]
+fn trash_expires_after_the_chosen_days_only() {
+    let day = 24 * 60 * 60 * 1000;
+    let now = 100 * day;
+    let mut old = work(ID, SongState::Completed);
+    old.trashed_ms = Some(now - 30 * day);
+    let mut recent = work("fedcba9876543210fedcba9876543210", SongState::Completed);
+    recent.trashed_ms = Some(now - 29 * day);
+    let kept = work("00000000000000000000000000000001", SongState::Completed);
+    assert_eq!(
+        expired_trash(&[old, recent, kept], now, 30),
+        vec![ID.to_string()]
+    );
+    // A clock set back never deletes anything early.
+    let mut future = work(ID, SongState::Completed);
+    future.trashed_ms = Some(now + day);
+    assert!(expired_trash(&[future], now, 30).is_empty());
+}
+
+#[test]
+fn the_engine_stays_loaded_only_as_long_as_settings_say() {
+    assert_eq!(idle_limit(false), Some(Duration::from_secs(600)));
+    assert_eq!(idle_limit(true), None);
+    assert_eq!(
+        idle_wait(true, false, false),
+        IdleWait::For(Duration::from_secs(600))
+    );
+    assert_eq!(idle_wait(true, false, true), IdleWait::UntilWoken);
+    // Free up memory now wins over keeping it loaded.
+    assert_eq!(idle_wait(true, true, true), IdleWait::Unload);
+    // Nothing loaded: a stale release request is simply dropped.
+    assert_eq!(idle_wait(false, true, false), IdleWait::UntilWoken);
+}
+
+#[test]
 fn changes_that_cannot_be_saved_are_undone() {
     let temp = tempfile::tempdir().unwrap();
     let mut w = work(ID, SongState::Completed);

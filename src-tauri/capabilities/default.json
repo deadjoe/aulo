@@ -3,5 +3,10 @@
   "identifier": "default",
   "description": "Local desktop window, user-initiated folder selection and song export",
   "windows": ["main"],
-  "permissions": ["core:default", "dialog:allow-open", "dialog:allow-save"]
+  "permissions": [
+    "core:default",
+    "dialog:allow-open",
+    "dialog:allow-save",
+    "notification:default"
+  ]
 }

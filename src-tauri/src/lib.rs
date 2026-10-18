@@ -3,23 +3,25 @@ mod collections;
 mod engine;
 mod models;
 mod runner;
+mod settings;
 mod share;
 mod songs;
+mod support;
 use serde::Serialize;
 use sysinfo::{Disks, System};
 use tauri::Manager;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct Hardware {
-    platform: String,
-    arch: String,
-    chip: String,
-    memory_gi_b: f64,
-    free_disk_gi_b: Option<f64>,
-    gpu: Option<String>,
-    gpu_memory_gi_b: Option<f64>,
-    data_path: String,
+pub(crate) struct Hardware {
+    pub(crate) platform: String,
+    pub(crate) arch: String,
+    pub(crate) chip: String,
+    pub(crate) memory_gi_b: f64,
+    pub(crate) free_disk_gi_b: Option<f64>,
+    pub(crate) gpu: Option<String>,
+    pub(crate) gpu_memory_gi_b: Option<f64>,
+    pub(crate) data_path: String,
 }
 
 #[cfg(target_os = "windows")]
@@ -110,7 +112,7 @@ async fn inspect_hardware(app: tauri::AppHandle) -> Result<Hardware, String> {
         .map_err(|e| e.to_string())
 }
 
-fn collect_hardware(path: std::path::PathBuf) -> Hardware {
+pub(crate) fn collect_hardware(path: std::path::PathBuf) -> Hardware {
     let mut system = System::new();
     system.refresh_memory();
     system.refresh_cpu_all();
@@ -140,9 +142,11 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(models::ModelManager::default())
         .manage(engine::EngineCache::default())
         .manage(songs::SongService::default())
+        .manage(settings::SettingsStore::default())
         .invoke_handler(tauri::generate_handler![
             inspect_hardware,
             engine::engine_status,
@@ -152,6 +156,7 @@ pub fn run() {
             models::verify_models,
             models::pause_models,
             models::open_model_license,
+            models::remove_models,
             songs::creation_status,
             songs::list_songs,
             songs::create_song,
@@ -173,8 +178,13 @@ pub fn run() {
             songs::song_waveform,
             songs::export_song,
             songs::reveal_song,
-            songs::reveal_library,
-            share::share_song
+            share::share_song,
+            settings::get_settings,
+            settings::update_settings,
+            songs::engine_memory,
+            songs::release_engine,
+            support::storage_usage,
+            support::save_report
         ])
         .build(tauri::generate_context!())
         .expect("Failed to start Aulo")

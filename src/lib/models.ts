@@ -18,7 +18,8 @@ export type ModelPhase =
   | "paused"
   | "unverified"
   | "verified"
-  | "failed";
+  | "failed"
+  | "removing";
 export interface ModelStatus {
   phase: ModelPhase;
   operation: "download" | "verify" | null;
@@ -46,3 +47,6 @@ export function formatBytes(bytes: number): string {
 }
 
 export const openModelLicense = () => invoke<void>("open_model_license");
+/** Settings › Remove music models. A folder of the person's own is kept. */
+export const removeModels = () =>
+  invoke<{ keptFolder: string | null }>("remove_models");
