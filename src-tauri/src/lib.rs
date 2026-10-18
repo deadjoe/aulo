@@ -1,5 +1,6 @@
 mod engine;
 mod models;
+mod runner;
 mod songs;
 use serde::Serialize;
 use sysinfo::{Disks, System};
@@ -131,10 +132,18 @@ pub fn run() {
             songs::create_song,
             songs::cancel_song,
             songs::update_song,
-            songs::delete_song
+            songs::trash_song,
+            songs::export_song,
+            songs::reveal_song
         ])
-        .run(tauri::generate_context!())
-        .expect("Failed to start Aulo");
+        .build(tauri::generate_context!())
+        .expect("Failed to start Aulo")
+        .run(|app, event| {
+            // Never leave a music engine running after Aulo quits.
+            if let tauri::RunEvent::Exit = event {
+                app.state::<songs::SongService>().shutdown();
+            }
+        });
 }
 
 #[cfg(test)]

@@ -3,7 +3,7 @@ import {
   ChevronDown,
   Music2,
   RefreshCw,
-  Sparkles,
+  LoaderCircle,
   Trash2,
   WandSparkles,
 } from "lucide-react";
@@ -358,7 +358,11 @@ export default function Composer({
           title={!ready ? status?.message : missing || undefined}
           onClick={onCreate}
         >
-          {creating ? <Sparkles size={18} /> : <WandSparkles size={18} />}
+          {creating ? (
+            <LoaderCircle size={18} className="spin" />
+          ) : (
+            <WandSparkles size={18} />
+          )}
           Create
         </button>
       </footer>

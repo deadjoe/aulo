@@ -97,7 +97,7 @@ fn events_update_progress_and_completion_requires_real_audio() {
     let folder = temp.path();
     let mut w = work(ID, "running");
     let progress = parse_event(
-        br#"{"protocolVersion":2,"event":"progress","stage":"rendering","completed":3,"total":32}"#,
+        br#"{"protocolVersion":3,"event":"progress","stage":"rendering","completed":3,"total":32}"#,
     )
     .unwrap();
     assert!(apply_event(&mut w, &progress, folder));
@@ -110,10 +110,10 @@ fn events_update_progress_and_completion_requires_real_audio() {
         })
     );
     let unknown =
-        parse_event(br#"{"protocolVersion":2,"event":"progress","stage":"hacking"}"#).unwrap();
+        parse_event(br#"{"protocolVersion":3,"event":"progress","stage":"hacking"}"#).unwrap();
     assert!(!apply_event(&mut w, &unknown, folder));
     let done = parse_event(
-        br#"{"protocolVersion":2,"event":"completed","work":{"audio":"audio.flac","duration":61.5}}"#,
+        br#"{"protocolVersion":3,"event":"completed","work":{"audio":"audio.flac","duration":61.5}}"#,
     )
     .unwrap();
     assert!(!apply_event(&mut w, &done, folder));
@@ -125,97 +125,162 @@ fn events_update_progress_and_completion_requires_real_audio() {
     assert!(apply_event(&mut w, &done, folder));
     assert_eq!(w.state, "completed");
     assert_eq!(w.duration, Some(61.5));
-    assert!(parse_event(br#"{"protocolVersion":1,"event":"failed"}"#).is_none());
+    assert!(parse_event(br#"{"protocolVersion":2,"event":"failed"}"#).is_none());
+}
+
+#[cfg(unix)]
+fn fixture_engine(dir: &Path, body: &str) -> std::process::Command {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = dir.join("engine");
+    fs::write(&fixture, format!("#!/bin/sh\n{body}")).unwrap();
+    fs::set_permissions(&fixture, fs::Permissions::from_mode(0o700)).unwrap();
+    let mut command = std::process::Command::new(&fixture);
+    command.stdin(Stdio::piped()).stdout(Stdio::piped());
+    command
 }
 
 #[cfg(unix)]
 #[test]
-fn engine_process_streams_events_and_receives_the_request() {
-    use std::os::unix::fs::PermissionsExt;
+fn engine_process_serves_commands_and_streams_events() {
     let dir = tempfile::tempdir().unwrap();
-    let fixture = dir.path().join("engine");
-    let captured = dir.path().join("request.json");
-    fs::write(
-        &fixture,
-        format!(
-            "#!/bin/sh\nhead -n 1 > '{}'\necho 'noise'\necho '{{\"protocolVersion\":2,\"event\":\"progress\",\"stage\":\"writing\"}}'\necho '{{\"protocolVersion\":2,\"event\":\"cancelled\"}}'\n",
-            captured.display()
+    let captured = dir.path().join("commands");
+    let command = fixture_engine(
+        dir.path(),
+        &format!(
+            "read first; echo \"$first\" > '{0}'\necho noise\necho '{{\"protocolVersion\":3,\"event\":\"ready\"}}'\nread cmd; echo \"$cmd\" >> '{0}'\necho '{{\"protocolVersion\":3,\"event\":\"progress\",\"stage\":\"writing\",\"workId\":\"{1}\"}}'\nread done; echo \"$done\" >> '{0}'\n",
+            captured.display(),
+            ID
         ),
-    )
-    .unwrap();
-    fs::set_permissions(&fixture, fs::Permissions::from_mode(0o700)).unwrap();
-    let mut command = std::process::Command::new(&fixture);
-    command.stdin(Stdio::piped()).stdout(Stdio::piped());
-    let mut events = Vec::new();
-    run_engine(
-        command,
-        &serde_json::json!({"operation": "generate"}),
-        |_, _| {},
-        |e| events.push(e.event),
-    )
-    .unwrap();
-    assert_eq!(events, ["progress", "cancelled"]);
-    assert!(fs::read_to_string(captured).unwrap().contains("generate"));
+    );
+    let process = EngineProcess::start(command, None, 3, Duration::from_secs(5)).expect("ready");
+    process
+        .send(&generate_command(
+            ID,
+            &request(),
+            Path::new("/m"),
+            Path::new("/o"),
+        ))
+        .unwrap();
+    match process.next(Duration::from_secs(5)).unwrap() {
+        Output::Event(event) => {
+            assert_eq!(event.stage.as_deref(), Some("writing"));
+            assert_eq!(event.work_id.as_deref(), Some(ID));
+        }
+        Output::Closed => panic!("closed early"),
+    }
+    process.shutdown(Duration::from_secs(5));
+    let lines = fs::read_to_string(captured).unwrap();
+    assert!(lines.contains("\"operation\":\"serve\""));
+    assert!(lines.contains("\"operation\":\"generate\""));
+    assert!(lines.contains("\"operation\":\"shutdown\""));
 }
 
-fn live_run(cancel_after: Option<&'static str>) -> (Vec<EngineEvent>, PathBuf) {
+#[cfg(unix)]
+#[test]
+fn engines_that_never_become_ready_are_stopped() {
+    let dir = tempfile::tempdir().unwrap();
+    for body in ["exit 1\n", "exec sleep 30\n"] {
+        let started = std::time::Instant::now();
+        let command = fixture_engine(dir.path(), body);
+        assert!(EngineProcess::start(command, None, 3, Duration::from_millis(300)).is_err());
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_crashed_engine_reports_closed_output() {
+    let dir = tempfile::tempdir().unwrap();
+    let command = fixture_engine(
+        dir.path(),
+        "read first\necho '{\"protocolVersion\":3,\"event\":\"ready\"}'\nexit 3\n",
+    );
+    let process = EngineProcess::start(command, None, 3, Duration::from_secs(5)).unwrap();
+    assert!(matches!(
+        process.next(Duration::from_secs(5)),
+        Ok(Output::Closed)
+    ));
+}
+
+struct Live {
+    process: EngineProcess,
+    output: PathBuf,
+    models: PathBuf,
+}
+
+fn live_engine() -> Live {
     let python = PathBuf::from(std::env::var_os("AULO_DEV_PYTHON").expect("Set AULO_DEV_PYTHON"));
     let models = PathBuf::from(std::env::var_os("AULO_DEV_MODELS").expect("Set AULO_DEV_MODELS"));
     let output = PathBuf::from(std::env::var_os("AULO_DEV_OUTPUT").expect("Set AULO_DEV_OUTPUT"));
-    let id = new_id();
-    fs::create_dir_all(output.join(&id)).unwrap();
+    fs::create_dir_all(&output).unwrap();
     let script = engine::bridge_script().unwrap();
     let mut command = engine::bridge_command(&python, script.path(), &output);
-    command.stderr(File::create(output.join(&id).join("engine.log")).unwrap());
-    let request = serde_json::json!({
-        "protocolVersion": engine::PROTOCOL_VERSION,
-        "operation": "generate",
-        "workId": id,
-        "style": "warm acoustic folk, gentle guitar, female vocal",
-        "lyrics": "[Verse]\nMorning light across the kitchen floor\nCoffee warm and nothing more\n[Chorus]\nSlow down, slow down, Sunday",
-        "instrumental": false,
-        "vocal": "female",
-        "weirdness": 50,
-        "styleInfluence": 50,
-        "modelRoot": models,
-        "outputRoot": output,
-    });
-    let stdin = Arc::new(Mutex::new(None));
-    let mut events = Vec::new();
-    run_engine(
+    command.stderr(File::create(output.join("engine.log")).unwrap());
+    let process = EngineProcess::start(
         command,
-        &request,
-        |_, input| *stdin.lock().unwrap() = Some(input),
-        |event| {
-            if cancel_after.is_some() && event.stage.as_deref() == cancel_after {
-                if let Some(input) = stdin.lock().unwrap().as_mut() {
-                    input.write_all(b"cancel\n").unwrap();
-                    input.flush().unwrap();
-                }
-            }
-            eprintln!("{event:?}");
-            events.push(event);
-        },
+        Some(script),
+        engine::PROTOCOL_VERSION,
+        ENGINE_START,
     )
     .unwrap();
-    (events, output.join(id))
+    Live {
+        process,
+        output,
+        models,
+    }
+}
+
+fn live_song(live: &Live, cancel_at: Option<&str>) -> (Vec<EngineEvent>, PathBuf, f64) {
+    let id = new_id();
+    let mut r = request();
+    r.style = "warm acoustic folk, gentle guitar, female vocal".into();
+    r.lyrics = "[Verse]\nMorning light across the kitchen floor\nCoffee warm and nothing more\n[Chorus]\nSlow down, slow down, Sunday".into();
+    let started = std::time::Instant::now();
+    live.process
+        .send(&generate_command(&id, &r, &live.models, &live.output))
+        .unwrap();
+    let mut events = Vec::new();
+    loop {
+        let Output::Event(event) = live.process.next(ENGINE_WATCHDOG).unwrap() else {
+            panic!("engine closed");
+        };
+        if cancel_at.is_some() && event.stage.as_deref() == cancel_at {
+            live.process
+                .send(&serde_json::json!({"operation": "cancel", "workId": id}))
+                .unwrap();
+        }
+        let terminal = matches!(event.event.as_str(), "completed" | "cancelled" | "failed");
+        eprintln!(
+            "{:?} {:?} {:?}",
+            event.event,
+            event.stage,
+            started.elapsed()
+        );
+        events.push(event);
+        if terminal {
+            break;
+        }
+    }
+    (
+        events,
+        live.output.join(id),
+        started.elapsed().as_secs_f64(),
+    )
 }
 
 #[test]
-#[ignore = "Generates a real song with a local development engine and models"]
-fn live_generation_produces_playable_audio() {
-    let (events, folder) = live_run(None);
-    let last = events.last().expect("engine events");
+#[ignore = "Generates two real songs with one resident development engine"]
+fn live_resident_engine_generates_and_reuses_the_model() {
+    let live = live_engine();
+    let (events, folder, first) = live_song(&live, None);
     let mut w = work(folder.file_name().unwrap().to_str().unwrap(), "running");
-    assert!(apply_event(&mut w, last, &folder), "{last:?}");
+    assert!(apply_event(&mut w, events.last().unwrap(), &folder));
     assert_eq!(w.state, "completed");
-    assert!(w.duration.unwrap() > 10.0);
-}
-
-#[test]
-#[ignore = "Starts and cancels a real song with a local development engine and models"]
-fn live_cancellation_stops_the_engine() {
-    let (events, folder) = live_run(Some("performing"));
+    let (events, _, cancelled) = live_song(&live, Some("performing"));
     assert_eq!(events.last().unwrap().event, "cancelled");
-    assert!(!folder.join("audio.flac").exists());
+    let (events, folder, second) = live_song(&live, None);
+    let mut w = work(folder.file_name().unwrap().to_str().unwrap(), "running");
+    assert!(apply_event(&mut w, events.last().unwrap(), &folder));
+    eprintln!("first {first:.1}s, cancelled after {cancelled:.1}s, second {second:.1}s");
+    live.process.shutdown(Duration::from_secs(20));
 }

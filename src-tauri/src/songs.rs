@@ -4,12 +4,14 @@
 //! The engine writes its artifacts into the same folder; only `completed` works point
 //! at audio. Records are replaced atomically and in-flight works found at startup are
 //! marked interrupted rather than presented as finished.
-use crate::{engine, models};
+use crate::{
+    engine, models,
+    runner::{send_line, EngineProcess, KeepAwake, Output},
+};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::VecDeque,
     fs::{self, File},
-    io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     process::{Child, ChildStdin, Stdio},
     sync::{Arc, Condvar, Mutex},
@@ -18,8 +20,13 @@ use std::{
 use tauri::{Emitter, Manager};
 
 const RECORD: &str = "aulo.json";
-const MAX_EVENT_BYTES: u64 = 65536;
 const CANCEL_GRACE: Duration = Duration::from_secs(30);
+/// Starting includes importing PyTorch; the first song then loads the model.
+const ENGINE_START: Duration = Duration::from_secs(180);
+/// Every stage reports at least every 100 tokens or render step; silence this long is a hang.
+const ENGINE_WATCHDOG: Duration = Duration::from_secs(600);
+/// After this long without songs, the engine exits and returns its memory.
+const ENGINE_IDLE: Duration = Duration::from_secs(600);
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -181,6 +188,8 @@ pub struct EngineEvent {
     pub total: Option<u32>,
     #[serde(default)]
     pub work: Option<EngineResult>,
+    #[serde(default)]
+    pub work_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, PartialEq)]
@@ -258,21 +267,19 @@ pub fn apply_event(work: &mut Work, event: &EngineEvent, folder: &Path) -> bool 
     }
 }
 
-struct Running {
-    id: String,
-    stdin: Option<ChildStdin>,
-    child: Arc<Mutex<Child>>,
-}
-
 #[derive(Default)]
 struct State {
     loaded: bool,
     works: Vec<Work>,
     queue: VecDeque<String>,
-    running: Option<Running>,
-    /// A cancellation for the work being started or run; it survives the gap before spawn.
+    /// The work the engine is making now.
+    current: Option<String>,
+    /// A cancellation for the work being started or run; it survives the gap before sending.
     cancel_id: Option<String>,
+    input: Option<Arc<Mutex<Option<ChildStdin>>>>,
+    child: Option<Arc<Mutex<Child>>>,
     worker: bool,
+    stopping: bool,
 }
 
 #[derive(Clone, Default)]
@@ -284,6 +291,21 @@ fn library_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         .app_data_dir()
         .map_err(|e| e.to_string())?
         .join("library"))
+}
+
+/// The engine's stderr, kept across songs and trimmed when it grows large.
+fn engine_log(base: &Path) -> Result<File, String> {
+    let folder = base.join("logs");
+    fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
+    let path = folder.join("engine.log");
+    if fs::metadata(&path).is_ok_and(|m| m.len() > 5 * 1024 * 1024) {
+        let _ = fs::rename(&path, folder.join("engine.previous.log"));
+    }
+    fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|e| e.to_string())
 }
 
 impl SongService {
@@ -328,22 +350,63 @@ impl SongService {
         std::thread::spawn(move || service.work_loop(app));
     }
 
+    /// Stop the engine at once; used when Aulo quits.
+    pub fn shutdown(&self) {
+        let child = {
+            let mut state = self.0 .0.lock().unwrap();
+            state.stopping = true;
+            state.child.take()
+        };
+        self.0 .1.notify_all();
+        if let Some(child) = child {
+            let mut child = child.lock().unwrap();
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+
+    fn forget_engine(&self) {
+        let mut state = self.0 .0.lock().unwrap();
+        state.input = None;
+        state.child = None;
+    }
+
     fn work_loop(&self, app: tauri::AppHandle) {
+        let mut engine: Option<EngineProcess> = None;
         loop {
-            let id = {
+            let next = {
                 let (lock, wake) = &*self.0;
                 let mut state = lock.lock().unwrap();
                 loop {
-                    if let Some(id) = state.queue.pop_front() {
-                        break id;
+                    if state.stopping {
+                        return;
                     }
-                    state = wake.wait(state).unwrap();
+                    if let Some(id) = state.queue.pop_front() {
+                        break Some(id);
+                    }
+                    if engine.is_none() {
+                        state = wake.wait(state).unwrap();
+                        continue;
+                    }
+                    let (guard, waited) = wake.wait_timeout(state, ENGINE_IDLE).unwrap();
+                    state = guard;
+                    if waited.timed_out() && state.queue.is_empty() {
+                        break None;
+                    }
                 }
             };
-            let result = self.run_one(&app, &id);
+            let Some(id) = next else {
+                // Idle: give the model's memory back to the computer.
+                if let Some(process) = engine.take() {
+                    self.forget_engine();
+                    process.shutdown(Duration::from_secs(10));
+                }
+                continue;
+            };
+            let result = self.run_one(&app, &id, &mut engine);
             let cancelled = {
                 let mut state = self.0 .0.lock().unwrap();
-                state.running = None;
+                state.current = None;
                 state.cancel_id.take().is_some_and(|c| c == id)
             };
             self.update(&app, &id, true, |work| {
@@ -356,7 +419,7 @@ impl SongService {
                         Ok(()) => {
                             work.state = "failed".into();
                             work.message = Some(
-                                "The music engine stopped before the song was finished.".into(),
+                                "This song could not be finished. Try creating it again.".into(),
                             );
                         }
                         Err(message) => {
@@ -371,7 +434,29 @@ impl SongService {
         }
     }
 
-    fn run_one(&self, app: &tauri::AppHandle, id: &str) -> Result<(), String> {
+    fn start_engine(&self, base: &Path) -> Result<EngineProcess, String> {
+        let script = engine::bridge_script().map_err(|e| e.to_string())?;
+        let python = engine::interpreter(base);
+        let mut command = engine::bridge_command(&python, script.path(), base);
+        command.stderr(Stdio::from(engine_log(base)?));
+        let process = EngineProcess::start(
+            command,
+            Some(script),
+            engine::PROTOCOL_VERSION,
+            ENGINE_START,
+        )?;
+        let mut state = self.0 .0.lock().unwrap();
+        state.input = Some(process.input.clone());
+        state.child = Some(process.child.clone());
+        Ok(process)
+    }
+
+    fn run_one(
+        &self,
+        app: &tauri::AppHandle,
+        id: &str,
+        engine: &mut Option<EngineProcess>,
+    ) -> Result<(), String> {
         let base = app.path().app_data_dir().map_err(|e| e.to_string())?;
         let root = base.join("library");
         let model_root = models::verified_root(app, &app.state::<models::ModelManager>())
@@ -393,132 +478,114 @@ impl SongService {
             work.stage = Some("preparing".into());
             work.started_ms = Some(now_ms());
         });
+        let _awake = KeepAwake::start();
+        if engine.as_ref().is_none_or(|e| !e.alive()) {
+            if let Some(old) = engine.take() {
+                old.kill();
+            }
+            *engine = Some(self.start_engine(&base).map_err(|_| {
+                "The music engine could not start. Close and reopen Aulo to try again.".to_string()
+            })?);
+        }
+        let process = engine.as_ref().expect("engine started");
+        process.send(&generate_command(id, &request, &model_root, &root))?;
+        let cancel_now = {
+            let mut state = self.0 .0.lock().unwrap();
+            state.current = Some(id.to_string());
+            state.cancel_id.as_deref() == Some(id)
+        };
+        if cancel_now {
+            self.request_cancel(id);
+        }
         let folder = root.join(id);
-        let line = serde_json::json!({
-            "protocolVersion": engine::PROTOCOL_VERSION,
-            "operation": "generate",
-            "workId": id,
-            "style": request.style,
-            "lyrics": request.lyrics,
-            "instrumental": request.instrumental,
-            "vocal": request.vocal,
-            "weirdness": request.weirdness,
-            "styleInfluence": request.style_influence,
-            "modelRoot": model_root,
-            "outputRoot": root,
-        });
-        let script = engine::bridge_script().map_err(|e| e.to_string())?;
-        let python = engine::interpreter(&base);
-        let mut command = engine::bridge_command(&python, script.path(), &base);
-        let log = File::create(folder.join("engine.log")).map_err(|e| e.to_string())?;
-        command.stderr(Stdio::from(log));
-        let service = self.clone();
-        let app_events = app.clone();
-        let id_events = id.to_string();
-        run_engine(
-            command,
-            &line,
-            |child, stdin| {
-                let mut state = service.0 .0.lock().unwrap();
-                state.running = Some(Running {
-                    id: id_events.clone(),
-                    stdin: Some(stdin),
-                    child,
-                });
-                let cancel_requested = state.cancel_id.as_deref() == Some(id_events.as_str());
-                drop(state);
-                if cancel_requested {
-                    service.request_cancel(&id_events);
+        loop {
+            match process.next(ENGINE_WATCHDOG) {
+                Ok(Output::Event(event)) if event.work_id.as_deref() == Some(id) => {
+                    let terminal =
+                        matches!(event.event.as_str(), "completed" | "cancelled" | "failed");
+                    self.update(app, id, event.event != "progress", |work| {
+                        apply_event(work, &event, &folder);
+                    });
+                    if terminal {
+                        return Ok(());
+                    }
                 }
-            },
-            |event| {
-                service.update(&app_events, &id_events, event.event != "progress", |work| {
-                    apply_event(work, &event, &folder);
-                });
-            },
-        )
+                Ok(Output::Event(_)) => continue,
+                Ok(Output::Closed) => {
+                    self.forget_engine();
+                    if let Some(old) = engine.take() {
+                        old.kill();
+                    }
+                    return Err(
+                        "The music engine stopped unexpectedly. Try creating this song again."
+                            .into(),
+                    );
+                }
+                Err(_) => {
+                    self.forget_engine();
+                    if let Some(old) = engine.take() {
+                        old.kill();
+                    }
+                    return Err(
+                        "The music engine stopped responding. Try creating this song again.".into(),
+                    );
+                }
+            }
+        }
     }
 
     fn request_cancel(&self, id: &str) {
-        let child = {
+        let (input, child) = {
             let mut state = self.0 .0.lock().unwrap();
             state.cancel_id = Some(id.to_string());
-            let Some(running) = state.running.as_mut().filter(|r| r.id == id) else {
+            if state.current.as_deref() != Some(id) {
                 return;
-            };
-            if let Some(stdin) = running.stdin.as_mut() {
-                let _ = stdin.write_all(b"cancel\n").and_then(|_| stdin.flush());
             }
-            running.child.clone()
+            (state.input.clone(), state.child.clone())
         };
-        // The engine stops at its next checkpoint; stop it outright if it does not.
+        if let Some(input) = input {
+            let _ = send_line(
+                &input,
+                &serde_json::json!({"operation": "cancel", "workId": id}),
+            );
+        }
+        // The engine stops at its next checkpoint; stop the process if it does not.
+        let service = self.clone();
+        let id = id.to_string();
         std::thread::spawn(move || {
             let started = std::time::Instant::now();
             while started.elapsed() < CANCEL_GRACE {
-                if child
-                    .lock()
-                    .unwrap()
-                    .try_wait()
-                    .map_or(true, |s| s.is_some())
-                {
+                if service.0 .0.lock().unwrap().current.as_deref() != Some(id.as_str()) {
                     return;
                 }
-                std::thread::sleep(Duration::from_millis(200));
+                std::thread::sleep(Duration::from_millis(250));
             }
-            let mut child = child.lock().unwrap();
-            let _ = child.kill();
+            if let Some(child) = child {
+                let mut child = child.lock().unwrap();
+                let _ = child.kill();
+            }
         });
     }
 }
 
-/// Run one bridge process: send the request, stream events, and wait for exit.
-pub fn run_engine(
-    mut command: std::process::Command,
-    request: &serde_json::Value,
-    started: impl FnOnce(Arc<Mutex<Child>>, ChildStdin),
-    mut on_event: impl FnMut(EngineEvent),
-) -> Result<(), String> {
-    let mut child = command
-        .spawn()
-        .map_err(|_| "The music engine could not start.".to_string())?;
-    let stdout = child.stdout.take().ok_or("Missing engine output")?;
-    let mut stdin = child.stdin.take().ok_or("Missing engine input")?;
-    let mut line = serde_json::to_vec(request).map_err(|e| e.to_string())?;
-    line.push(b'\n');
-    let child = Arc::new(Mutex::new(child));
-    if stdin.write_all(&line).and_then(|_| stdin.flush()).is_err() {
-        let mut child = child.lock().unwrap();
-        let _ = child.kill();
-        let _ = child.wait();
-        return Err("The music engine could not start.".into());
-    }
-    started(child.clone(), stdin);
-    let mut reader = BufReader::new(stdout);
-    loop {
-        let mut buffer = Vec::new();
-        let read = (&mut reader)
-            .take(MAX_EVENT_BYTES + 1)
-            .read_until(b'\n', &mut buffer)
-            .map_err(|_| "Lost contact with the music engine.")?;
-        if read == 0 {
-            break;
-        }
-        if buffer.len() as u64 > MAX_EVENT_BYTES {
-            let _ = child.lock().unwrap().kill();
-            break;
-        }
-        if let Some(event) = parse_event(&buffer) {
-            on_event(event);
-        }
-    }
-    // Reap the process; a cancel watchdog may hold the lock briefly.
-    loop {
-        if let Ok(Some(_)) | Err(_) = child.lock().unwrap().try_wait() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    Ok(())
+pub fn generate_command(
+    id: &str,
+    request: &SongRequest,
+    model_root: &Path,
+    output_root: &Path,
+) -> serde_json::Value {
+    serde_json::json!({
+        "operation": "generate",
+        "workId": id,
+        "style": request.style,
+        "lyrics": request.lyrics,
+        "instrumental": request.instrumental,
+        "vocal": request.vocal,
+        "weirdness": request.weirdness,
+        "styleInfluence": request.style_influence,
+        "modelRoot": model_root,
+        "outputRoot": output_root,
+    })
 }
 
 #[derive(Serialize)]
@@ -656,8 +723,66 @@ pub fn update_song(
     Ok(())
 }
 
+fn finished_audio(
+    app: &tauri::AppHandle,
+    service: &SongService,
+    id: &str,
+) -> Result<PathBuf, String> {
+    if !valid_id(id) {
+        return Err("Unknown song.".into());
+    }
+    let root = library_root(app)?;
+    service.with_state(app, |state| {
+        state
+            .works
+            .iter()
+            .find(|w| w.id == id && w.state == "completed")
+            .map(|_| root.join(id).join("audio.flac"))
+            .filter(|path| path.is_file())
+            .ok_or_else(|| "This song has no audio yet.".to_string())
+    })?
+}
+
+/// Copy a finished song to a place the person chose in the save dialog.
 #[tauri::command]
-pub fn delete_song(
+pub async fn export_song(
+    app: tauri::AppHandle,
+    service: tauri::State<'_, SongService>,
+    id: String,
+    destination: String,
+) -> Result<(), String> {
+    let source = finished_audio(&app, &service, &id)?;
+    let destination = PathBuf::from(destination);
+    if !destination.is_absolute()
+        || destination
+            .extension()
+            .is_none_or(|e| !e.eq_ignore_ascii_case("flac"))
+    {
+        return Err("Choose a file name ending in .flac.".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || fs::copy(&source, &destination))
+        .await
+        .map_err(|e| e.to_string())?
+        .map(|_| ())
+        .map_err(|_| "The song could not be saved there. Choose another folder.".into())
+}
+
+#[tauri::command]
+pub fn reveal_song(
+    app: tauri::AppHandle,
+    service: tauri::State<SongService>,
+    id: String,
+) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let audio = finished_audio(&app, &service, &id)?;
+    app.opener()
+        .reveal_item_in_dir(audio)
+        .map_err(|_| "The song's folder could not be opened.".into())
+}
+
+/// Move a song to the computer's trash, so it can still be restored from there.
+#[tauri::command]
+pub fn trash_song(
     app: tauri::AppHandle,
     service: tauri::State<SongService>,
     id: String,
@@ -673,10 +798,10 @@ pub fn delete_song(
             .find(|w| w.id == id)
             .ok_or("Unknown song.")?;
         if work.active() {
-            return Err("Stop this song before deleting it.".to_string());
+            return Err("Stop this song before moving it to the Trash.".to_string());
         }
-        fs::remove_dir_all(root.join(&id))
-            .map_err(|_| "This song could not be deleted.".to_string())?;
+        trash::delete(root.join(&id))
+            .map_err(|_| "This song could not be moved to the Trash.".to_string())?;
         state.works.retain(|w| w.id != id);
         Ok(())
     })?

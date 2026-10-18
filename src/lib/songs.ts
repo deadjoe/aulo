@@ -55,7 +55,10 @@ export const updateSong = (
   id: string,
   changes: { title?: string; favorite?: boolean },
 ) => invoke<void>("update_song", { id, ...changes });
-export const deleteSong = (id: string) => invoke<void>("delete_song", { id });
+export const trashSong = (id: string) => invoke<void>("trash_song", { id });
+export const exportSong = (id: string, destination: string) =>
+  invoke<void>("export_song", { id, destination });
+export const revealSong = (id: string) => invoke<void>("reveal_song", { id });
 export function onSongUpdated(handler: (song: Song) => void) {
   if (!isTauri()) return () => {};
   const stop = listen<Song>("song-updated", (event) => handler(event.payload));
@@ -67,23 +70,10 @@ export const audioUrl = (song: Song) =>
 export const isActive = (song: Song) =>
   song.state === "queued" || song.state === "running";
 
-const STAGE_LABELS: Record<Stage, string> = {
-  preparing: "Warming up the studio",
-  writing: "Writing the melody",
-  performing: "Performing your song",
-  rendering: "Recording",
-  mixing: "Mixing",
-  saving: "Finishing touches",
-};
+/** Plain status words for songs that are not finished; finished songs need none. */
 export function statusLabel(song: Song): string {
-  if (song.state === "queued") return "Waiting for its turn";
-  if (song.state === "running") {
-    const label = STAGE_LABELS[song.stage ?? "preparing"];
-    const p = song.progress;
-    return p
-      ? `${label} · ${Math.round((p.completed / p.total) * 100)}%`
-      : label;
-  }
+  if (song.state === "queued") return "Waiting to start…";
+  if (song.state === "running") return "Creating…";
   if (song.state === "cancelled") return "Stopped";
   if (song.state === "interrupted" || song.state === "failed")
     return song.message ?? "This song could not be finished.";

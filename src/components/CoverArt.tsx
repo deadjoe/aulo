@@ -48,17 +48,15 @@ export function coverStyle(id: string, style: string): CSSProperties {
 export default function CoverArt({
   id,
   style,
-  active = false,
   size = "md",
 }: {
   id: string;
   style: string;
-  active?: boolean;
   size?: "sm" | "md" | "lg";
 }) {
   return (
     <span
-      className={`cover cover-${size}${active ? " cover-active" : ""}`}
+      className={`cover cover-${size}`}
       style={coverStyle(id, style)}
       aria-hidden="true"
     >

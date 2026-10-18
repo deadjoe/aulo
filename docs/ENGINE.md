@@ -1,6 +1,6 @@
 # Private music engine boundary
 
-Aulo calls the existing installed `yue2_groove.adapter`; it does not import Gradio handlers, start a web server, copy model implementations, or change the GROOVE checkout. `runtime/bridge.py` uses protocol version 2 over UTF-8 newline-delimited JSON. Library output, including native stdout, is redirected to stderr. Each process accepts one request and exits; during a generation the host may send one `cancel` line.
+Aulo calls the existing installed `yue2_groove.adapter`; it does not import Gradio handlers, start a web server, copy model implementations, or change the GROOVE checkout. `runtime/bridge.py` uses protocol version 3 over UTF-8 newline-delimited JSON. Library output, including native stdout, is redirected to stderr. A process either answers one `probe` and exits, or `serve`s: it stays running, keeps the loaded model between songs, and reads `generate`, `cancel` and `shutdown` commands. Every event of a song carries its `workId`. The process leaves with `os._exit` so a command reader blocked on stdin cannot crash interpreter shutdown.
 
 ## Discovery and readiness
 
@@ -32,16 +32,24 @@ The bridge maps the controls onto GROOVE's documented recipes ([GENERATION_CREAT
 
 YuE2 has no instrumental switch, so the UI says that some humming can still appear. Plan mode is always `full`, ODE steps are GROOVE's default 32, the seed is random per song, and the semantic budget is trimmed to the model context as GROOVE does.
 
-Progress reports real stages (preparing, writing, performing, rendering, mixing, saving) and the NAR/VAE step counts the engine exposes, without estimating a whole-song percentage. Completed output must contain decodable, nonempty audio, and artifacts are flushed before the pending marker is removed. Cancelled and failed runs keep a pending marker with their state.
+The engine reports real stages (preparing, writing, performing, rendering, mixing, saving) and NAR/VAE step counts. The interface does not show them: like Suno, it shows a spinner on the song's cover and "Creating…", because stage names mean nothing to the people Aulo is for. The stages remain in each record for diagnostics and the watchdog. Completed output must contain decodable, nonempty audio, and artifacts are flushed before the pending marker is removed. Cancelled and failed runs keep a pending marker with their state.
 
 ## Song service
 
-`src-tauri/src/songs.rs` owns one queue and one running engine process. Works are folders under `<app-data>/library/<id>/` with an atomically replaced `aulo.json` record and an `engine.log`. Only a `completed` event with an existing `audio.flac` and no pending marker makes a work playable. Works left queued or running by a previous session are marked interrupted at startup. Stop sends `cancel` and terminates the process if it has not exited after 30 seconds. Playback uses Tauri's asset protocol, scoped to `library/*/audio.flac`.
+`src-tauri/src/songs.rs` owns one queue, and `src-tauri/src/runner.rs` one resident engine process:
+
+- The engine starts with the first song (180-second start limit, which covers importing PyTorch) and keeps the model loaded. After 10 minutes without songs it is shut down so the computer gets its memory back.
+- Each stage reports at least every 100 tokens or render step. Ten minutes without any event is treated as a hang: the process is stopped and the song marked failed with a plain message. A crashed process is detected the same way and restarted for the next song.
+- Stop sends `cancel` for that song; if the engine has not stopped after 30 seconds, the process is stopped.
+- When Aulo quits, the engine is stopped. While a song is being made on macOS, `caffeinate -i` keeps the computer from idle sleep.
+- The engine's stderr is appended to `<app-data>/logs/engine.log`, rotated at 5 MB.
+
+Works are folders under `<app-data>/library/<id>/` with an atomically replaced `aulo.json` record. Only a `completed` event with an existing `audio.flac` and no pending marker makes a work playable. Works left queued or running by a previous session are marked interrupted at startup. Playback uses Tauri's asset protocol, scoped to `library/*/audio.flac`. Download copies `audio.flac` to a place chosen in the save dialog; Move to Trash uses the operating system's trash so songs can be restored.
 
 ## Remaining integration gates
 
 - Packaged runtimes per platform, installed and smoke-tested on clean machines.
 - Windows device validation of the GGUF and PyTorch paths through Aulo.
-- Keeping one model loaded between songs; each song currently loads the model in its own process.
+- Keep-awake on Windows (macOS uses `caffeinate`).
 - Cover and edit flows.
 - Signed distribution, updates, and rollback.

@@ -9,7 +9,7 @@ use std::{
 };
 use tauri::Manager;
 
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -159,7 +159,7 @@ fn probe_process(python: &Path, base: &Path, timeout: Duration) -> Result<Engine
         .stdin
         .take()
         .ok_or("Missing engine input")?
-        .write_all(b"{\"protocolVersion\":2,\"operation\":\"probe\"}\n");
+        .write_all(b"{\"protocolVersion\":3,\"operation\":\"probe\"}\n");
     let started = Instant::now();
     let result = loop {
         if input_result.is_err() {
@@ -223,7 +223,7 @@ pub async fn engine_status(app: tauri::AppHandle) -> Result<EngineStatus, String
 mod tests {
     use super::*;
 
-    const GOOD: &str = r#"{"protocolVersion":2,"event":"probe","engineVersion":"1.0.10","yueVersion":"0.1.6","device":"mps","backend":"torch"}"#;
+    const GOOD: &str = r#"{"protocolVersion":3,"event":"probe","engineVersion":"1.0.10","yueVersion":"0.1.6","device":"mps","backend":"torch"}"#;
 
     #[test]
     fn a_supported_backend_makes_the_engine_ready() {
@@ -250,7 +250,7 @@ mod tests {
             GOOD.replace("1.0.10", "1.0.11"),
             GOOD.replace("\"torch\"", "\"vllm\""),
             GOOD.replace("\"probe\"", "\"completed\""),
-            GOOD.replace(":2,", ":1,"),
+            GOOD.replace(":3,", ":2,"),
         ] {
             assert!(parse_probe(bad.as_bytes()).is_err());
         }

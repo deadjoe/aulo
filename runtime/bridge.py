@@ -1,8 +1,11 @@
 """Private, versioned process boundary around the installed GROOVE adapter.
 
 No web server, Gradio handlers, model downloads, or inference implementation.
-One request per process; stdout is reserved for newline-delimited JSON events.
-After a generate request, the host may send a single ``cancel`` line on stdin.
+stdout is reserved for newline-delimited JSON events.
+
+A process either answers one ``probe`` and exits, or ``serve``s: it keeps the loaded
+model between songs and reads ``generate``, ``cancel`` and ``shutdown`` commands
+from stdin, one JSON object per line, until the host shuts it down.
 """
 
 from __future__ import annotations
@@ -15,13 +18,15 @@ from pathlib import Path
 import re
 import secrets
 import sys
+import queue
 import threading
 import traceback
 
-PROTOCOL_VERSION = 2
+PROTOCOL_VERSION = 3
 GROOVE_VERSION = "1.0.10"
 YUE_VERSION = "0.1.6"
 MAX_REQUEST_BYTES = 65536
+HEARTBEAT_TOKENS = 100  # liveness for the host watchdog during long token stages
 WORK_ID = re.compile(r"^[0-9a-f]{32}$")
 
 # GROOVE's own defaults (webui/runtime.py ABC_DEFAULTS / SEM_DEFAULTS, settings_store
@@ -120,38 +125,55 @@ def select_backend(device, adapter, gguf_engine):
 
 
 def validate_request(request):
+    """The first line: ``probe`` or ``serve``."""
     if not isinstance(request, dict) or request.get("protocolVersion") != PROTOCOL_VERSION:
         raise ValueError("Unsupported engine protocol.")
     operation = request.get("operation")
-    if operation == "probe":
-        if set(request) != {"protocolVersion", "operation"}:
-            raise ValueError("Unexpected probe fields.")
+    if operation not in ("probe", "serve"):
+        raise ValueError("Unknown engine operation.")
+    if set(request) != {"protocolVersion", "operation"}:
+        raise ValueError("Unexpected fields.")
+    return operation
+
+
+def validate_command(command):
+    """A command while serving: ``generate``, ``cancel`` or ``shutdown``."""
+    if not isinstance(command, dict):
+        raise ValueError("Invalid command.")
+    operation = command.get("operation")
+    if operation == "shutdown":
+        if set(command) != {"operation"}:
+            raise ValueError("Unexpected shutdown fields.")
+        return operation
+    if not isinstance(command.get("workId"), str) or not WORK_ID.match(command["workId"]):
+        raise ValueError("Invalid work identifier.")
+    if operation == "cancel":
+        if set(command) != {"operation", "workId"}:
+            raise ValueError("Unexpected cancel fields.")
         return operation
     if operation != "generate":
-        raise ValueError("Unknown engine operation.")
-    allowed = {"protocolVersion", "operation", "workId", "style", "lyrics", "instrumental",
-               "vocal", "weirdness", "styleInfluence", "modelRoot", "outputRoot"}
-    if set(request) - allowed:
+        raise ValueError("Unknown engine command.")
+    allowed = {"operation", "workId", "style", "lyrics", "instrumental", "vocal", "weirdness",
+               "styleInfluence", "modelRoot", "outputRoot"}
+    if set(command) - allowed:
         raise ValueError("Unexpected generation fields.")
     for key, limit in (("style", 1000), ("lyrics", 16000)):
-        value = request.get(key, "")
+        value = command.get(key, "")
         if not isinstance(value, str) or len(value) > limit:
             raise ValueError(f"Invalid {key}.")
-    if not isinstance(request.get("instrumental", False), bool):
+    if not isinstance(command.get("instrumental", False), bool):
         raise ValueError("Invalid instrumental choice.")
-    if request.get("vocal", "auto") not in ("auto", "female", "male"):
+    if command.get("vocal", "auto") not in ("auto", "female", "male"):
         raise ValueError("Invalid vocal choice.")
     for key in ("weirdness", "styleInfluence"):
-        value = request.get(key, 50)
+        value = command.get(key, 50)
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 100:
             raise ValueError(f"Invalid {key}.")
-    if not isinstance(request.get("workId"), str) or not WORK_ID.match(request["workId"]):
-        raise ValueError("Invalid work identifier.")
     for key in ("modelRoot", "outputRoot"):
-        value = request.get(key)
+        value = command.get(key)
         if not isinstance(value, str) or not Path(value).is_absolute():
             raise ValueError(f"{key} must be an absolute application-owned path.")
-    song_texts(request)
+    song_texts(command)
     return operation
 
 
@@ -186,95 +208,211 @@ def fit_semantic_budget(adapter, gguf_engine, pipe, request, abc_sampling, seman
     return adapter.sampling(**fields)
 
 
-def generate(request, report, runtime, cancelled):
-    """Generate one song into ``outputRoot/workId``; returns the playable result."""
-    from yue2_groove import adapter, gguf_engine
-    import soundfile
+class Engine:
+    """One loaded pipeline, reused for every song with the same model folder."""
 
-    if runtime.get("backend") is None:
-        raise RuntimeError("A supported accelerator is required.")
-    root = Path(request["modelRoot"]).resolve(strict=True)
-    model, vae = root / "YuE2-3B", root / "YuE2-Vae"
-    if not model.is_dir() or not vae.is_dir():
-        raise ValueError("The music model folder is incomplete.")
-    style, lyrics = song_texts(request)
-    output = Path(request["outputRoot"])
-    output.mkdir(parents=True, exist_ok=True)
-    work = output / request["workId"]
-    work.mkdir(exist_ok=True)
-    pending = work / "pending.json"
-    pending.write_text(json.dumps({"state": "running"}), encoding="utf-8")
-    pipe = None
-    try:
-        report("progress", stage="preparing")
-        pipe = load_engine(adapter, gguf_engine, runtime, model, vae, report)
-        song_request = adapter.song_request(
-            style=style, lyrics=lyrics, cot="full", seed=secrets.randbelow(2**31),
-            cfg_scale=cfg_scale(request.get("styleInfluence", 50)), id=request["workId"],
-        )
-        abc_sampling = adapter.sampling(**ABC_SAMPLING)
-        semantic = adapter.sampling(**(SEMANTIC_SAMPLING | {
-            "temperature": semantic_temperature(request.get("weirdness", 50))}))
-        semantic = fit_semantic_budget(adapter, gguf_engine, pipe, song_request,
-                                       abc_sampling, semantic)
-        report("progress", stage="writing")
-        stages = {"abc": "writing", "semantic": "performing"}
-        last = {"stage": "writing"}
+    def __init__(self, runtime):
+        self.runtime = runtime
+        self.pipe = None
+        self.key = None
 
-        def on_token(phase, _token, _count=1):
-            stage = stages.get(phase)
-            if stage and stage != last["stage"]:
-                last["stage"] = stage
-                report("progress", stage=stage)
+    def pipeline(self, adapter, gguf_engine, model, vae, report):
+        key = (str(model), str(vae), self.runtime["backend"])
+        if self.pipe is not None and self.key == key:
+            return self.pipe
+        self.close(adapter)
+        self.pipe = load_engine(adapter, gguf_engine, self.runtime, model, vae, report)
+        self.key = key
+        return self.pipe
 
-        def on_progress(stage, done, total):
-            name = {"nar": "rendering", "vae": "mixing"}.get(stage)
-            if name:
-                report("progress", stage=name, completed=done, total=total)
-
-        song = adapter.generate(
-            pipe, song_request, abc_sampling=abc_sampling, semantic_sampling=semantic,
-            cancelled=cancelled, on_token=on_token, on_progress=on_progress,
-        )
-        report("progress", stage="saving")
-        song.save_artifacts(work)
-        audio = work / "audio.flac"
-        info = soundfile.info(audio)
-        if info.frames <= 0 or info.samplerate <= 0:
-            raise RuntimeError("The music engine did not produce playable audio.")
-        # Do not publish completion until all generated files have been flushed.
-        for path in work.rglob("*"):
-            if path.is_file():
-                with path.open("rb") as handle:
-                    os.fsync(handle.fileno())
-        pending.unlink()
-        return {"audio": "audio.flac", "duration": info.duration,
-                "engineVersion": GROOVE_VERSION, "backend": runtime["backend"]}
-    except BaseException as error:
-        state = "cancelled" if isinstance(error, InterruptedError) else "failed"
-        pending.write_text(json.dumps({"state": state}), encoding="utf-8")
-        raise
-    finally:
-        if pipe is not None:
-            adapter.close_pipeline(pipe)
-
-
-def watch_for_cancel(stream, event):
-    """Set *event* when the host sends ``cancel``; EOF alone is not a cancellation."""
-    def run():
+    def close(self, adapter=None):
+        if self.pipe is None:
+            return
+        if adapter is None:
+            from yue2_groove import adapter
         with contextlib.suppress(Exception):
-            for line in stream:
-                if line.strip() == b"cancel":
-                    event.set()
-                    return
+            adapter.close_pipeline(self.pipe)
+        self.pipe, self.key = None, None
 
-    threading.Thread(target=run, daemon=True).start()
+    def generate(self, request, report, cancelled):
+        """Generate one song into ``outputRoot/workId``; returns the playable result."""
+        from yue2_groove import adapter, gguf_engine
+        import soundfile
+
+        if self.runtime.get("backend") is None:
+            raise RuntimeError("A supported accelerator is required.")
+        root = Path(request["modelRoot"]).resolve(strict=True)
+        model, vae = root / "YuE2-3B", root / "YuE2-Vae"
+        if not model.is_dir() or not vae.is_dir():
+            raise ValueError("The music model folder is incomplete.")
+        style, lyrics = song_texts(request)
+        output = Path(request["outputRoot"])
+        output.mkdir(parents=True, exist_ok=True)
+        work = output / request["workId"]
+        work.mkdir(exist_ok=True)
+        pending = work / "pending.json"
+        pending.write_text(json.dumps({"state": "running"}), encoding="utf-8")
+        try:
+            report("progress", stage="preparing")
+            pipe = self.pipeline(adapter, gguf_engine, model, vae, report)
+            if cancelled():
+                raise InterruptedError("Cancelled before generation")
+            song_request = adapter.song_request(
+                style=style, lyrics=lyrics, cot="full", seed=secrets.randbelow(2**31),
+                cfg_scale=cfg_scale(request.get("styleInfluence", 50)), id=request["workId"],
+            )
+            abc_sampling = adapter.sampling(**ABC_SAMPLING)
+            semantic = adapter.sampling(**(SEMANTIC_SAMPLING | {
+                "temperature": semantic_temperature(request.get("weirdness", 50))}))
+            semantic = fit_semantic_budget(adapter, gguf_engine, pipe, song_request,
+                                           abc_sampling, semantic)
+            report("progress", stage="writing")
+            stages = {"abc": "writing", "semantic": "performing"}
+            state = {"stage": "writing", "tokens": 0}
+
+            def on_token(phase, _token, count=1):
+                stage = stages.get(phase, state["stage"])
+                before = state["tokens"] // HEARTBEAT_TOKENS
+                state["tokens"] += count
+                if stage != state["stage"] or state["tokens"] // HEARTBEAT_TOKENS != before:
+                    state["stage"] = stage
+                    report("progress", stage=stage)
+
+            def on_progress(stage, done, total):
+                name = {"nar": "rendering", "vae": "mixing"}.get(stage)
+                if name:
+                    report("progress", stage=name, completed=done, total=total)
+
+            song = adapter.generate(
+                pipe, song_request, abc_sampling=abc_sampling, semantic_sampling=semantic,
+                cancelled=cancelled, on_token=on_token, on_progress=on_progress,
+            )
+            report("progress", stage="saving")
+            song.save_artifacts(work)
+            audio = work / "audio.flac"
+            info = soundfile.info(audio)
+            if info.frames <= 0 or info.samplerate <= 0:
+                raise RuntimeError("The music engine did not produce playable audio.")
+            # Do not publish completion until all generated files have been flushed.
+            for path in work.rglob("*"):
+                if path.is_file():
+                    with path.open("rb") as handle:
+                        os.fsync(handle.fileno())
+            pending.unlink()
+            return {"audio": "audio.flac", "duration": info.duration,
+                    "engineVersion": GROOVE_VERSION, "backend": self.runtime["backend"]}
+        except BaseException as error:
+            state = "cancelled" if isinstance(error, InterruptedError) else "failed"
+            pending.write_text(json.dumps({"state": state}), encoding="utf-8")
+            raise
+        finally:
+            release_cache()
+
+
+def release_cache():
+    """Return scratch memory between songs; the loaded weights stay resident."""
+    with contextlib.suppress(Exception):
+        import gc
+
+        import torch
+
+        gc.collect()
+        if torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+        elif torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+
+class Commands:
+    """Reads commands on a background thread so ``cancel`` arrives mid-song."""
+
+    def __init__(self, stream):
+        self.queue = queue.Queue()
+        self.current = None
+        self.cancel = threading.Event()
+        self.lock = threading.Lock()
+        self.thread = threading.Thread(target=self.read, args=(stream,), daemon=True)
+
+    def start(self):
+        self.thread.start()
+        return self
+
+    def read(self, stream):
+        try:
+            while True:
+                raw = stream.readline(MAX_REQUEST_BYTES + 1)
+                if not raw:
+                    break
+                if len(raw) > MAX_REQUEST_BYTES:
+                    self.queue.put(("invalid", None))
+                    continue
+                try:
+                    command = json.loads(raw)
+                    operation = validate_command(command)
+                except (ValueError, json.JSONDecodeError):
+                    work_id = None
+                    with contextlib.suppress(Exception):
+                        candidate = json.loads(raw).get("workId")
+                        work_id = candidate if WORK_ID.match(candidate) else None
+                    self.queue.put(("invalid", work_id))
+                    continue
+                if operation == "cancel":
+                    with self.lock:
+                        if self.current == command["workId"]:
+                            self.cancel.set()
+                    continue
+                self.queue.put((operation, command))
+        finally:
+            self.queue.put(("shutdown", None))
+
+    def begin(self, work_id):
+        with self.lock:
+            self.current = work_id
+            self.cancel.clear()
+
+    def end(self):
+        with self.lock:
+            self.current = None
+
+
+def serve(runtime, commands, report):
+    engine = Engine(runtime)
+    report("ready", **runtime)
+    try:
+        while True:
+            operation, command = commands.queue.get()
+            if operation == "shutdown":
+                return
+            if operation == "invalid":
+                fields = {"workId": command} if command else {}
+                report("failed", message="The music engine rejected a request.", **fields)
+                continue
+            work_id = command["workId"]
+            commands.begin(work_id)
+            try:
+                result = engine.generate(
+                    command,
+                    lambda event, **fields: report(event, workId=work_id, **fields),
+                    commands.cancel.is_set,
+                )
+                report("completed", workId=work_id, work=result)
+            except InterruptedError:
+                report("cancelled", workId=work_id)
+            except Exception:
+                traceback.print_exc(file=sys.stderr)
+                report("failed", workId=work_id,
+                       message="The music engine could not complete this song.")
+            finally:
+                commands.end()
+    finally:
+        engine.close()
 
 
 def main():
     # Keep library/native stdout out of the protocol, including C-level writes.
     protocol = os.fdopen(os.dup(sys.stdout.fileno()), "w", encoding="utf-8", buffering=1)
     os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
+    code = 1
     with protocol, contextlib.redirect_stdout(sys.stderr):
         def report(event, **fields):
             emit(protocol, event, **fields)
@@ -282,25 +420,21 @@ def main():
             raw = sys.stdin.buffer.readline(MAX_REQUEST_BYTES + 1)
             if len(raw) > MAX_REQUEST_BYTES:
                 raise ValueError("Engine request is too large.")
-            request = json.loads(raw)
-            operation = validate_request(request)
+            operation = validate_request(json.loads(raw))
             runtime = inspect_runtime()
             if operation == "probe":
                 report("probe", **runtime)
             else:
-                cancel = threading.Event()
-                watch_for_cancel(sys.stdin.buffer, cancel)
-                result = generate(request, report, runtime, cancel.is_set)
-                report("completed", work=result)
-            return 0
-        except InterruptedError:
-            report("cancelled")
-            return 1
+                serve(runtime, Commands(sys.stdin.buffer).start(), report)
+            code = 0
         except Exception:
             traceback.print_exc(file=sys.stderr)
-            report("failed", message="The music engine could not complete this request.")
-            return 1
+            report("failed", message="The music engine could not start.")
+        protocol.flush()
+        sys.stderr.flush()
+    # The command reader may still be blocked on stdin; leave without waiting for it.
+    os._exit(code)
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()

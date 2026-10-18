@@ -20,28 +20,36 @@ WORK_ID = "0123456789abcdef0123456789abcdef"
 
 
 def generate_request(directory, **fields):
-    return {"protocolVersion": 2, "operation": "generate", "workId": WORK_ID,
+    return {"operation": "generate", "workId": WORK_ID,
             "style": "folk", "lyrics": "a line", "modelRoot": str(directory),
             "outputRoot": str(Path(directory) / "works")} | fields
 
 
 class BridgeTests(unittest.TestCase):
-    def test_invalid_inputs_fail_before_importing_engine(self):
-        for request in [[], {}, {"protocolVersion": 1, "operation": "probe"},
-                        {"protocolVersion": 2, "operation": "shell"},
-                        {"protocolVersion": 2, "operation": "probe", "command": "anything"}]:
+    def test_first_line_is_probe_or_serve(self):
+        self.assertEqual(bridge.validate_request({"protocolVersion": 3, "operation": "probe"}),
+                         "probe")
+        self.assertEqual(bridge.validate_request({"protocolVersion": 3, "operation": "serve"}),
+                         "serve")
+        for request in [[], {}, {"protocolVersion": 2, "operation": "probe"},
+                        {"protocolVersion": 3, "operation": "shell"},
+                        {"protocolVersion": 3, "operation": "probe", "command": "anything"}]:
             with self.assertRaises(ValueError):
                 bridge.validate_request(request)
 
     def test_paths_text_and_controls_are_bounded(self):
         request = generate_request(BRIDGE.parent)
-        self.assertEqual(bridge.validate_request(request), "generate")
+        self.assertEqual(bridge.validate_command(request), "generate")
+        self.assertEqual(bridge.validate_command({"operation": "cancel", "workId": WORK_ID}),
+                         "cancel")
+        self.assertEqual(bridge.validate_command({"operation": "shutdown"}), "shutdown")
         for update in [{"style": "x" * 1001}, {"lyrics": None}, {"outputRoot": "../escape"},
                        {"style": "", "lyrics": ""}, {"backend": "custom"}, {"abc": "X:1"},
                        {"workId": "../x"}, {"weirdness": 101}, {"styleInfluence": True},
-                       {"vocal": "robot"}, {"instrumental": "yes"}, {"lyrics": ""}]:
+                       {"vocal": "robot"}, {"instrumental": "yes"}, {"lyrics": ""},
+                       {"operation": "shell"}]:
             with self.assertRaises(ValueError):
-                bridge.validate_request(request | update)
+                bridge.validate_command(request | update)
 
     def test_simple_controls_map_to_groove_defaults_and_recipes(self):
         self.assertIsNone(bridge.cfg_scale(0))
@@ -90,12 +98,19 @@ class BridgeTests(unittest.TestCase):
     def test_events_are_versioned(self):
         stream = io.StringIO()
         bridge.emit(stream, "progress", stage="preparing")
-        self.assertEqual(json.loads(stream.getvalue())["protocolVersion"], 2)
+        self.assertEqual(json.loads(stream.getvalue())["protocolVersion"], 3)
 
-    def test_cancel_line_sets_the_flag(self):
-        event = threading.Event()
-        bridge.watch_for_cancel(io.BytesIO(b"noise\ncancel\n"), event)
-        self.assertTrue(event.wait(2))
+    def test_commands_cancel_only_the_current_song_and_end_with_shutdown(self):
+        other = "f" * 32
+        lines = [json.dumps({"operation": "cancel", "workId": other}),
+                 "not json",
+                 json.dumps({"operation": "cancel", "workId": WORK_ID})]
+        commands = bridge.Commands(io.BytesIO(("\n".join(lines) + "\n").encode()))
+        commands.begin(WORK_ID)
+        commands.start().thread.join(2)
+        self.assertTrue(commands.cancel.is_set())
+        self.assertEqual(commands.queue.get_nowait(), ("invalid", None))
+        self.assertEqual(commands.queue.get_nowait(), ("shutdown", None))
 
     def fake_engine(self):
         adapter = Mock()
@@ -121,7 +136,8 @@ class BridgeTests(unittest.TestCase):
             request = generate_request(directory, styleInfluence=50, weirdness=100)
             runtime = {"device": "mps", "backend": "torch"}
             with patch.dict(sys.modules, modules):
-                record = bridge.generate(request, Mock(), runtime, lambda: False)
+                engine = bridge.Engine(runtime)
+                record = engine.generate(request, Mock(), lambda: False)
                 work = root / "works" / WORK_ID
                 self.assertEqual(record["duration"], 1.0)
                 self.assertFalse((work / "pending.json").exists())
@@ -130,11 +146,13 @@ class BridgeTests(unittest.TestCase):
                 self.assertEqual((load["backend"], load["ode_steps"]), ("torch", 32))
                 self.assertEqual(adapter.song_request.call_args.kwargs["cfg_scale"], 1.5)
                 self.assertEqual(adapter.sampling.call_args_list[1].kwargs["temperature"], 1.25)
-                adapter.close_pipeline.assert_called_once_with("pipeline")
-                # A corrupt output must remain an unfinished work.
+                # The loaded model is reused for the next song.
                 soundfile.info.side_effect = RuntimeError("invalid audio")
                 with self.assertRaises(RuntimeError):
-                    bridge.generate(request, Mock(), runtime, lambda: False)
+                    engine.generate(request, Mock(), lambda: False)
+                adapter.load_pipeline.assert_called_once()
+                engine.close(adapter)
+                adapter.close_pipeline.assert_called_once_with("pipeline")
                 pending = json.loads((work / "pending.json").read_text())
                 self.assertEqual(pending["state"], "failed")
 
@@ -146,8 +164,9 @@ class BridgeTests(unittest.TestCase):
             adapter, gguf, _, modules = self.fake_engine()
             gguf.GgufPipeline.open.return_value = "gguf-pipeline"
             with patch.dict(sys.modules, modules):
-                bridge.generate(generate_request(directory), Mock(),
-                                {"device": "cuda", "backend": "gguf"}, lambda: False)
+                engine = bridge.Engine({"device": "cuda", "backend": "gguf"})
+                engine.generate(generate_request(directory), Mock(), lambda: False)
+                engine.close(adapter)
             adapter.load_pipeline.assert_not_called()
             self.assertEqual(gguf.GgufPipeline.open.call_args.kwargs["ode_steps"], 32)
             adapter.close_pipeline.assert_called_once_with("gguf-pipeline")
@@ -160,8 +179,8 @@ class BridgeTests(unittest.TestCase):
             adapter, _, _, modules = self.fake_engine()
             adapter.generate.side_effect = InterruptedError("Cancelled")
             with patch.dict(sys.modules, modules), self.assertRaises(InterruptedError):
-                bridge.generate(generate_request(directory), Mock(),
-                                {"device": "mps", "backend": "torch"}, lambda: True)
+                bridge.Engine({"device": "mps", "backend": "torch"}).generate(
+                    generate_request(directory), Mock(), lambda: True)
             pending = json.loads((root / "works" / WORK_ID / "pending.json").read_text())
             self.assertEqual(pending["state"], "cancelled")
 
@@ -169,8 +188,26 @@ class BridgeTests(unittest.TestCase):
         _, _, _, modules = self.fake_engine()
         with patch.dict(sys.modules, modules):
             with self.assertRaisesRegex(RuntimeError, "accelerator"):
-                bridge.generate({}, Mock(), {"device": "cpu", "backend": None}, lambda: False)
+                bridge.Engine({"device": "cpu", "backend": None}).generate({}, Mock(), lambda: False)
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ServeTests(unittest.TestCase):
+    def test_serve_reports_each_song_and_keeps_going_after_a_failure(self):
+        events = []
+        engine = Mock()
+        engine.generate.side_effect = [RuntimeError("boom"), {"audio": "audio.flac"}]
+        commands = bridge.Commands(io.BytesIO())
+        for _ in range(2):
+            commands.queue.put(("generate", {"workId": WORK_ID}))
+        commands.queue.put(("invalid", None))
+        commands.queue.put(("shutdown", None))
+        with patch.object(bridge, "Engine", return_value=engine):
+            bridge.serve({"backend": "torch"}, commands,
+                         lambda event, **fields: events.append((event, fields.get("workId"))))
+        self.assertEqual([e for e, _ in events], ["ready", "failed", "completed", "failed"])
+        self.assertEqual(events[2][1], WORK_ID)
+        engine.close.assert_called_once()
