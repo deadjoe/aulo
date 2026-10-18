@@ -7,6 +7,7 @@ import {
   ListPlus,
   ListVideo,
   MoreHorizontal,
+  MoreVertical,
   Pencil,
   RotateCcw,
   SlidersHorizontal,
@@ -53,11 +54,14 @@ export default function SongMenu({
   targets,
   actions,
   large = false,
+  vertical = false,
 }: {
   song: Song;
   targets: Song[];
   actions: SongActions;
   large?: boolean;
+  /** The player's vertical three dots. */
+  vertical?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -112,7 +116,7 @@ export default function SongMenu({
         aria-expanded={open}
         onClick={() => setOpen(!open)}
       >
-        <MoreHorizontal size={18} />
+        {vertical ? <MoreVertical size={18} /> : <MoreHorizontal size={18} />}
       </button>
       {open && (
         <div className="menu" role="menu" style={floating}>

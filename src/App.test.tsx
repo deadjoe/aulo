@@ -27,6 +27,8 @@ vi.mock("./lib/songs", async (importOriginal) => {
     cancelSong: vi.fn().mockResolvedValue(undefined),
     updateSong: vi.fn().mockResolvedValue(undefined),
     trashSongs: vi.fn((ids: string[]) => Promise.resolve(ids)),
+    deleteSongs: vi.fn((ids: string[]) => Promise.resolve(ids)),
+    deleteWorkspace: vi.fn().mockResolvedValue(undefined),
     listCollections: vi.fn(actual.listCollections),
     moveSongs: vi.fn().mockResolvedValue(undefined),
     addToPlaylist: vi.fn().mockResolvedValue(1),
@@ -59,6 +61,7 @@ const song = (overrides: Partial<Song> = {}): Song => ({
   audioPath: "/library/x/audio.flac",
   message: null,
   workspace: "default",
+  trashedMs: null,
   ...overrides,
 });
 
@@ -213,6 +216,13 @@ describe("library", () => {
     await user.click(
       within(menu).getByRole("menuitem", { name: /Move to Trash/ }),
     );
+    const confirm = screen.getByRole("dialog");
+    expect(
+      within(confirm).getByText(/restore songs from the Trash/),
+    ).toBeVisible();
+    await user.click(
+      within(confirm).getByRole("button", { name: "Move to Trash" }),
+    );
     expect(songs.trashSongs).toHaveBeenCalledWith([
       "0123456789abcdef0123456789abcdef",
     ]);
@@ -301,6 +311,12 @@ describe("library", () => {
     ).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "More for Monday" }));
     await user.keyboard("{Control>}{Delete}{/Control}");
+    expect(songs.trashSongs).not.toHaveBeenCalled();
+    await user.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Move to Trash",
+      }),
+    );
     expect(songs.trashSongs).toHaveBeenCalledWith([
       "0123456789abcdef0123456789abcdef",
       "fedcba9876543210fedcba9876543210",
@@ -349,6 +365,88 @@ describe("library", () => {
     expect(screen.getByText("Create new workspace")).toBeVisible();
     await user.click(screen.getByRole("button", { name: /^Rock/ }));
     expect(screen.getByText("Rock is empty")).toBeVisible();
+  });
+
+  it("restores songs from the Trash and asks before deleting them", async () => {
+    vi.mocked(songs.listSongs).mockResolvedValue([
+      song({ request: { ...song().request, title: "Sunday" } }),
+      song({
+        id: "fedcba9876543210fedcba9876543210",
+        trashedMs: Date.now() - 60_000,
+        request: { ...song().request, title: "Gone" },
+      }),
+    ]);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: /^Library/ }));
+    expect(screen.queryByText("Gone")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Trash \(1\)/ }));
+    expect(screen.getByText("Gone")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Restore" }));
+    expect(songs.trashSongs).toHaveBeenCalledWith(
+      ["fedcba9876543210fedcba9876543210"],
+      false,
+    );
+    await user.click(screen.getByRole("button", { name: "Delete Gone" }));
+    expect(songs.deleteSongs).not.toHaveBeenCalled();
+    await user.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Delete",
+      }),
+    );
+    expect(songs.deleteSongs).toHaveBeenCalledWith([
+      "fedcba9876543210fedcba9876543210",
+    ]);
+  });
+
+  it("asks before deleting a workspace and keeps its songs", async () => {
+    vi.mocked(songs.listCollections).mockResolvedValue({
+      workspaces: [
+        { id: "default", name: "My Workspace", createdMs: 0, archived: false },
+        { id: "rock", name: "Rock", createdMs: 1, archived: false },
+      ],
+      playlists: [],
+    });
+    vi.mocked(songs.listSongs).mockResolvedValue([
+      song({
+        workspace: "rock",
+        request: { ...song().request, title: "Loud" },
+      }),
+    ]);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "Workspaces" }));
+    await user.click(screen.getByRole("button", { name: "More for Rock" }));
+    await user.click(
+      screen.getByRole("menuitem", { name: /Delete workspace/ }),
+    );
+    const dialog = screen.getByRole("dialog");
+    expect(
+      within(dialog).getByText(/1 song will move to My Workspace/),
+    ).toBeVisible();
+    await user.click(
+      within(dialog).getByRole("button", { name: "Delete workspace" }),
+    );
+    expect(songs.deleteWorkspace).toHaveBeenCalledWith("rock");
+  });
+
+  it("opens the queue and mutes from the player", async () => {
+    vi.mocked(songs.listSongs).mockResolvedValue([
+      song({ request: { ...song().request, title: "Sunday" } }),
+    ]);
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByText("Sunday");
+    await user.click(screen.getByRole("button", { name: "Queue" }));
+    const queue = screen.getByRole("region", { name: "Queue" });
+    expect(within(queue).getByText("Nothing is playing.")).toBeVisible();
+    expect(within(queue).getByText("Next up")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Mute" }));
+    expect(screen.getByRole("button", { name: "Unmute" })).toBeVisible();
+    expect(screen.getByRole("slider", { name: "Volume" })).toHaveAttribute(
+      "aria-valuenow",
+      "0",
+    );
   });
 
   it("titles untitled songs from their first sung line", () => {

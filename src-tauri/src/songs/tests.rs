@@ -27,6 +27,7 @@ fn work(id: &str, state: SongState) -> Work {
         audio_path: None,
         message: None,
         workspace: DEFAULT_WORKSPACE.into(),
+        trashed_ms: None,
     }
 }
 

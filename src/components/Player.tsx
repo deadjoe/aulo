@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Heart,
+  ListMusic,
+  MoreVertical,
   Pause,
   Play,
   SkipBack,
   SkipForward,
   Volume2,
   VolumeX,
+  X,
 } from "lucide-react";
+import SongMenu, { type SongActions } from "./SongMenu";
 import CoverArt from "./CoverArt";
 import { audioUrl, displayTitle, formatTime, type Song } from "../lib/songs";
 
@@ -124,35 +127,51 @@ export function usePlayer(songs: Song[]) {
     [currentId, playable, start],
   );
 
+  // Queued songs first, then the library order after the current song.
+  const queuedSongs = useMemo(
+    () =>
+      queue
+        .map((id) => playable.find((s) => s.id === id))
+        .filter((s): s is Song => s !== undefined),
+    [queue, playable],
+  );
+  const following = useMemo(() => {
+    const index = playable.findIndex((s) => s.id === currentId);
+    return playable.slice(index + 1).filter((s) => !queue.includes(s.id));
+  }, [playable, currentId, queue]);
+
+  /** Play a song from the queue (or library), taking it out of the queue. */
+  const playNext = useCallback(
+    (song: Song) => {
+      setQueue((q) => q.filter((id) => id !== song.id));
+      start(song);
+    },
+    [start],
+  );
+
   const step = useCallback(
     (direction: 1 | -1) => {
       if (!playable.length) return;
+      if (direction === 1 && queuedSongs.length)
+        return playNext(queuedSongs[0]);
       const index = playable.findIndex((s) => s.id === currentId);
       const next =
         playable[(index + direction + playable.length) % playable.length];
       if (next) start(next);
     },
-    [currentId, playable, start],
+    [currentId, playable, queuedSongs, playNext, start],
   );
 
   useEffect(() => {
     const el = audio.current;
     if (!el) return;
     const ended = () => {
-      const queued = queue
-        .map((id) => playable.find((s) => s.id === id))
-        .find((s) => s !== undefined);
-      if (queued) {
-        setQueue((q) => q.slice(q.indexOf(queued.id) + 1));
-        start(queued);
-        return;
-      }
-      const index = playable.findIndex((s) => s.id === currentId);
-      if (index >= 0 && index < playable.length - 1) start(playable[index + 1]);
+      const next = queuedSongs[0] ?? following[0];
+      if (next) playNext(next);
     };
     el.addEventListener("ended", ended);
     return () => el.removeEventListener("ended", ended);
-  }, [currentId, playable, queue, start]);
+  }, [queuedSongs, following, playNext]);
 
   /** Play these songs now, in order, replacing what was queued. */
   const playAll = useCallback(
@@ -194,7 +213,11 @@ export function usePlayer(songs: Song[]) {
     toggle,
     enqueue,
     playAll,
-    queued: queue.length,
+    playNext,
+    queuedSongs,
+    following,
+    clearQueue: () => setQueue([]),
+    unqueue: (id: string) => setQueue((q) => q.filter((x) => x !== id)),
     step,
     seek,
     seekTo,
@@ -208,20 +231,185 @@ export function usePlayer(songs: Song[]) {
   };
 }
 
+function VolumeControl({
+  volume,
+  muted,
+  onVolume,
+  onMute,
+}: {
+  volume: number;
+  muted: boolean;
+  onVolume: (value: number) => void;
+  onMute: (muted: boolean) => void;
+}) {
+  const level = muted ? 0 : volume;
+  const set = (value: number) => {
+    onMute(false);
+    onVolume(Math.min(1, Math.max(0, value)));
+  };
+  const fromPointer = (e: React.PointerEvent<HTMLDivElement>) => {
+    const box = e.currentTarget.getBoundingClientRect();
+    set(1 - (e.clientY - box.top) / box.height);
+  };
+  return (
+    <div className="volume">
+      <div className="volume-pop">
+        <div
+          className="volume-track"
+          role="slider"
+          tabIndex={0}
+          aria-label="Volume"
+          aria-orientation="vertical"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(level * 100)}
+          onPointerDown={(e) => {
+            e.currentTarget.setPointerCapture(e.pointerId);
+            fromPointer(e);
+          }}
+          onPointerMove={(e) => {
+            if (e.currentTarget.hasPointerCapture(e.pointerId)) fromPointer(e);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowUp" || e.key === "ArrowRight")
+              set(level + 0.05);
+            if (e.key === "ArrowDown" || e.key === "ArrowLeft")
+              set(level - 0.05);
+          }}
+        >
+          <span style={{ height: `${level * 100}%` }} />
+        </div>
+      </div>
+      <button
+        className="round-button"
+        aria-label={muted ? "Unmute" : "Mute"}
+        data-tip={muted ? "Unmute" : "Mute"}
+        onClick={() => onMute(!muted)}
+      >
+        {muted || volume === 0 ? <VolumeX size={18} /> : <Volume2 size={18} />}
+      </button>
+    </div>
+  );
+}
+
+function QueueRow({
+  song,
+  onPlay,
+  onRemove,
+}: {
+  song: Song;
+  onPlay?: () => void;
+  onRemove?: () => void;
+}) {
+  const row = (
+    <>
+      <CoverArt id={song.id} style={song.request.style} size="sm" />
+      <span className="queue-text">
+        <strong>{displayTitle(song.request)}</strong>
+        <small>{song.request.style}</small>
+      </span>
+    </>
+  );
+  return (
+    <div className="queue-row">
+      {onPlay ? (
+        <button className="queue-play" onClick={onPlay}>
+          {row}
+        </button>
+      ) : (
+        <div className="queue-play">{row}</div>
+      )}
+      {onRemove && (
+        <button
+          className="round-button"
+          aria-label={`Remove ${displayTitle(song.request)} from the queue`}
+          onClick={onRemove}
+        >
+          <X size={15} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+function QueuePanel({
+  player,
+  onClose,
+}: {
+  player: ReturnType<typeof usePlayer>;
+  onClose: () => void;
+}) {
+  const { current, queuedSongs, following } = player;
+  return (
+    <section className="queue" aria-label="Queue">
+      <header>
+        <h2>Queue</h2>
+        <button
+          className="icon-button"
+          aria-label="Close queue"
+          onClick={onClose}
+        >
+          <X size={18} />
+        </button>
+      </header>
+      <div className="queue-scroll">
+        <h3>Now playing</h3>
+        {current ? (
+          <QueueRow song={current} />
+        ) : (
+          <p className="queue-empty">Nothing is playing.</p>
+        )}
+        <div className="queue-heading">
+          <h3>Next up</h3>
+          {queuedSongs.length > 0 && (
+            <button className="text-button" onClick={player.clearQueue}>
+              Clear
+            </button>
+          )}
+        </div>
+        {queuedSongs.map((song) => (
+          <QueueRow
+            key={`q-${song.id}`}
+            song={song}
+            onPlay={() => player.playNext(song)}
+            onRemove={() => player.unqueue(song.id)}
+          />
+        ))}
+        {following.map((song) => (
+          <QueueRow
+            key={song.id}
+            song={song}
+            onPlay={() => player.playNext(song)}
+          />
+        ))}
+        {queuedSongs.length + following.length === 0 && (
+          <p className="queue-empty">
+            Choose “Add to queue” on any song to play it next.
+          </p>
+        )}
+      </div>
+    </section>
+  );
+}
+
 export default function Player({
   player,
-  onFavorite,
+  actions,
   onOpen,
 }: {
   player: ReturnType<typeof usePlayer>;
-  onFavorite: (song: Song) => void;
+  actions: SongActions;
   onOpen: (song: Song) => void;
 }) {
   const { current } = player;
+  const [queueOpen, setQueueOpen] = useState(false);
   const title = current ? displayTitle(current.request) : "Nothing playing";
   const total = player.length || current?.duration || 0;
   return (
     <footer className="player" aria-label="Player">
+      {queueOpen && (
+        <QueuePanel player={player} onClose={() => setQueueOpen(false)} />
+      )}
       <div className="player-track">
         {current ? (
           <CoverArt id={current.id} style={current.request.style} size="sm" />
@@ -245,19 +433,6 @@ export default function Player({
                   : "Your songs play here")}
           </small>
         </span>
-        {current && (
-          <button
-            className={`round-button${current.favorite ? " loved" : ""}`}
-            aria-label={current.favorite ? `Unlike ${title}` : `Like ${title}`}
-            aria-pressed={current.favorite}
-            onClick={() => onFavorite(current)}
-          >
-            <Heart
-              size={16}
-              fill={current.favorite ? "currentColor" : "none"}
-            />
-          </button>
-        )}
       </div>
       <div className="player-center">
         <div className="transport">
@@ -310,30 +485,33 @@ export default function Player({
           <span>{formatTime(current ? total : null)}</span>
         </div>
       </div>
-      <div className="player-volume">
+      <div className="player-tools">
         <button
-          className="round-button"
-          aria-label={player.muted ? "Unmute" : "Mute"}
-          onClick={() => player.setMuted(!player.muted)}
+          className={`round-button${queueOpen ? " toggled" : ""}`}
+          aria-label="Queue"
+          aria-expanded={queueOpen}
+          data-tip="Queue"
+          onClick={() => setQueueOpen(!queueOpen)}
         >
-          {player.muted ? <VolumeX size={17} /> : <Volume2 size={17} />}
+          <ListMusic size={18} />
         </button>
-        <input
-          type="range"
-          aria-label="Volume"
-          min={0}
-          max={1}
-          step={0.01}
-          value={player.muted ? 0 : player.volume}
-          style={
-            {
-              "--fill": `${(player.muted ? 0 : player.volume) * 100}%`,
-            } as React.CSSProperties
-          }
-          onChange={(e) => {
-            player.setMuted(false);
-            player.setVolume(Number(e.target.value));
-          }}
+        {current ? (
+          <SongMenu
+            song={current}
+            targets={[current]}
+            actions={actions}
+            vertical
+          />
+        ) : (
+          <button className="round-button" aria-label="More" disabled>
+            <MoreVertical size={18} />
+          </button>
+        )}
+        <VolumeControl
+          volume={player.volume}
+          muted={player.muted}
+          onVolume={player.setVolume}
+          onMute={player.setMuted}
         />
       </div>
     </footer>

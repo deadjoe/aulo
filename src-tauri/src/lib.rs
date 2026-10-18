@@ -135,6 +135,8 @@ pub fn run() {
             songs::cancel_song,
             songs::update_song,
             songs::trash_songs,
+            songs::delete_songs,
+            songs::delete_workspace,
             songs::list_collections,
             songs::create_workspace,
             songs::rename_workspace,
