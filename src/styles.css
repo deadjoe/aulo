@@ -971,7 +971,7 @@ svg {
 }
 .field-card textarea::placeholder,
 .title-field input::placeholder {
-  color: #6f746a;
+  color: #858a7f;
 }
 .field-card textarea:focus-visible {
   outline: none;

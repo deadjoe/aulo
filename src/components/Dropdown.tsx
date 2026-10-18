@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Check, ChevronDown } from "lucide-react";
+import { useMenuKeys } from "../lib/menuKeys";
 
 export interface DropdownOption<T extends string> {
   value: T;
@@ -28,6 +29,9 @@ export default function Dropdown<T extends string>({
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const keys = useMenuKeys(open, setOpen, menu, trigger);
   useEffect(() => {
     if (!open) return;
     const close = (e: MouseEvent | KeyboardEvent) => {
@@ -48,17 +52,24 @@ export default function Dropdown<T extends string>({
   return (
     <div className="menu-anchor" ref={ref}>
       <button
+        ref={trigger}
         className={`tool-pill${active ? " selected" : ""}`}
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen(!open)}
+        onKeyDown={keys.onTriggerKeyDown}
       >
         {icon}
         {label}
         <ChevronDown size={15} />
       </button>
       {open && (
-        <div className="menu menu-left" role="menu">
+        <div
+          className="menu menu-left"
+          role="menu"
+          ref={menu}
+          onKeyDown={keys.onMenuKeyDown}
+        >
           {options.map((option) => {
             const checked = selected.includes(option.value);
             return (

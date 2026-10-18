@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   createSong,
   EMPTY_COLLECTIONS,
@@ -21,11 +21,12 @@ export function upsert(list: Song[], song: Song): Song[] {
 }
 
 /**
- * Merge the stored library with updates that arrived while it was loading:
- * a live update is newer than what the library read from disk.
+ * The stored library plus the updates that arrived while it was loading. Only
+ * those updates are newer than the disk; anything kept from an earlier visit
+ * is older and is replaced by what was loaded.
  */
-export function mergeLoaded(loaded: Song[], live: Song[]): Song[] {
-  return live.reduceRight(upsert, loaded);
+export function mergeLoaded(loaded: Song[], arrived: Song[]): Song[] {
+  return arrived.reduce(upsert, loaded);
 }
 
 /** The person's songs, kept current by the native song service. */
@@ -33,25 +34,37 @@ export function useLibrary(enabled: boolean, onError: (text: string) => void) {
   const [songs, setSongs] = useState<Song[]>([]);
   const [collections, setCollections] =
     useState<Collections>(EMPTY_COLLECTIONS);
+  // Updates received since the current load began, oldest first.
+  const arrived = useRef<Song[] | null>(null);
   useEffect(() => {
     if (!enabled) return;
     let active = true;
+    let loading = true;
+    const received: Song[] = [];
+    arrived.current = received;
     const stopCollections = onCollectionsUpdated(setCollections);
     listCollections().then(
       (c) => active && setCollections(c),
       () => undefined,
     );
-    const stop = onSongUpdated((song) =>
-      setSongs((list) => upsert(list, song)),
-    );
+    const stop = onSongUpdated((song) => {
+      if (loading) received.push(song);
+      setSongs((list) => upsert(list, song));
+    });
     listSongs().then(
-      (loaded) => active && setSongs((live) => mergeLoaded(loaded, live)),
+      (loaded) => {
+        if (!active) return;
+        loading = false;
+        arrived.current = null;
+        setSongs(mergeLoaded(loaded, received));
+      },
       () =>
         active &&
         onError("Your songs couldn’t be loaded. Reopen Aulo to try again."),
     );
     return () => {
       active = false;
+      arrived.current = null;
       stop();
       stopCollections();
     };
@@ -60,6 +73,7 @@ export function useLibrary(enabled: boolean, onError: (text: string) => void) {
 
   const start = useCallback(async (request: SongRequest, workspace: string) => {
     const song = await createSong(request, workspace);
+    arrived.current?.push(song);
     setSongs((list) => upsert(list, song));
     return song;
   }, []);

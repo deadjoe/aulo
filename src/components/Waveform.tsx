@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { songWaveform } from "../lib/songs";
 
 // Peaks never change for a finished song, so they are fetched once per session.
@@ -26,15 +26,41 @@ export default function Waveform({
   onSeek: (fraction: number) => void;
 }) {
   const [peaks, setPeaks] = useState<number[] | null>(null);
+  // Only songs scrolled into view are read, so a large library stays light.
+  const [visible, setVisible] = useState(
+    typeof IntersectionObserver === "undefined",
+  );
+  const ref = useRef<HTMLElement | null>(null);
   useEffect(() => {
+    const element = ref.current;
+    if (visible || !element) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) setVisible(true);
+      },
+      { rootMargin: "200px" },
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [visible]);
+  useEffect(() => {
+    if (!visible) return;
     let active = true;
     void peaksFor(id).then((p) => active && setPeaks(p));
     return () => {
       active = false;
     };
-  }, [id]);
+  }, [id, visible]);
   if (!peaks?.length)
-    return <div className="waveform waveform-empty" aria-hidden="true" />;
+    return (
+      <div
+        ref={(node) => {
+          ref.current = node;
+        }}
+        className="waveform waveform-empty"
+        aria-hidden="true"
+      />
+    );
   return (
     <button
       className="waveform"

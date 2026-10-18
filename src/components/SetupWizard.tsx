@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { assessHardware, detectHardware, type Hardware } from "../lib/hardware";
 import { getModelStatus, desktopModelsAvailable } from "../lib/models";
+import { creationStatus, type CreationStatus } from "../lib/songs";
 import { Brand } from "./Brand";
 import CoverArt from "./CoverArt";
 import ModelsPanel from "./ModelsPanel";
@@ -37,6 +38,8 @@ export default function SetupWizard({
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState("");
   const [modelsReady, setModelsReady] = useState(false);
+  // Whether songs can actually be made: models, engine and computer together.
+  const [creation, setCreation] = useState<CreationStatus | null>(null);
   const assessment = assessHardware(hardware);
 
   async function check() {
@@ -73,6 +76,51 @@ export default function SetupWizard({
       clearTimeout(timer);
     };
   }, [step]);
+
+  // Once the models are ready, ask the one question that matters: can Aulo create here?
+  useEffect(() => {
+    if (step !== 2 || !modelsReady) {
+      setCreation(null);
+      return;
+    }
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = () =>
+      creationStatus()
+        .then((s) => {
+          if (stopped) return;
+          setCreation(s);
+          if (!s.ready) timer = setTimeout(poll, 3000);
+        })
+        .catch(() => {
+          if (!stopped) timer = setTimeout(poll, 3000);
+        });
+    void poll();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [step, modelsReady]);
+  const canCreate = modelsReady && creation?.ready === true;
+  const blocked =
+    modelsReady &&
+    creation != null &&
+    !creation.ready &&
+    creation.blocker !== "models";
+  const finalTitle = canCreate
+    ? "You’re all set"
+    : blocked
+      ? "Aulo can’t make songs here yet"
+      : modelsReady
+        ? "Getting ready…"
+        : "Get the music models";
+  const finalLead = canCreate
+    ? "The music models are ready. Time to make your first song."
+    : blocked
+      ? "The music models are ready, but this computer can’t make songs with Aulo yet. You can still look around."
+      : modelsReady
+        ? "The music models are ready. Aulo is checking that it can make music on this computer."
+        : "Aulo needs its music models once to make songs. They stay on this computer.";
 
   const facts: [React.ReactNode, string, string | null | undefined][] = [
     [<Cpu key="c" size={18} />, "Chip", hardware?.chip],
@@ -205,12 +253,8 @@ export default function SetupWizard({
           )}
           {step === 2 && (
             <>
-              <h1>{modelsReady ? "You’re all set" : "Get the music models"}</h1>
-              <p className="lead">
-                {modelsReady
-                  ? "The music models are ready. Time to make your first song."
-                  : "Aulo needs its music models once to make songs. They stay on this computer."}
-              </p>
+              <h1>{finalTitle}</h1>
+              <p className="lead">{finalLead}</p>
               <ModelsPanel />
             </>
           )}
@@ -243,7 +287,7 @@ export default function SetupWizard({
               {step === 0 ? "Get started" : "Continue"}
               <ArrowRight size={17} />
             </button>
-          ) : modelsReady ? (
+          ) : canCreate ? (
             <button className="primary" onClick={onExplore}>
               Start creating
               <ArrowRight size={17} />

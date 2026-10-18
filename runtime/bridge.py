@@ -28,6 +28,7 @@ YUE_VERSION = "0.1.6"
 MAX_REQUEST_BYTES = 65536
 HEARTBEAT_TOKENS = 100  # liveness for the host watchdog during long token stages
 WORK_ID = re.compile(r"^[0-9a-f]{32}$")
+MAX_PENDING_CANCELS = 64
 
 # GROOVE's own defaults (webui/runtime.py ABC_DEFAULTS / SEM_DEFAULTS, settings_store
 # FIXED_DEFAULTS). Aulo only moves the knobs its simple controls name.
@@ -367,6 +368,8 @@ class Commands:
     def __init__(self, stream):
         self.queue = queue.Queue()
         self.current = None
+        # Cancels for songs not started yet: a cancel can overtake its own generate.
+        self.pending_cancels = set()
         self.cancel = threading.Event()
         self.lock = threading.Lock()
         self.thread = threading.Thread(target=self.read, args=(stream,), daemon=True)
@@ -398,6 +401,8 @@ class Commands:
                     with self.lock:
                         if self.current == command["workId"]:
                             self.cancel.set()
+                        elif len(self.pending_cancels) < MAX_PENDING_CANCELS:
+                            self.pending_cancels.add(command["workId"])
                     continue
                 self.queue.put((operation, command))
         finally:
@@ -407,6 +412,9 @@ class Commands:
         with self.lock:
             self.current = work_id
             self.cancel.clear()
+            if work_id in self.pending_cancels:
+                self.pending_cancels.discard(work_id)
+                self.cancel.set()
 
     def end(self):
         with self.lock:
