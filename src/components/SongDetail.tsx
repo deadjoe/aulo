@@ -37,11 +37,7 @@ function ShareButton({ song, actions }: { song: Song; actions: SongActions }) {
           .finally(() => setBusy(false));
       }}
     >
-      {busy ? (
-        <LoaderCircle size={18} className="spin" />
-      ) : (
-        <Share size={18} />
-      )}
+      {busy ? <LoaderCircle size={18} className="spin" /> : <Share size={18} />}
     </button>
   );
 }
