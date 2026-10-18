@@ -25,6 +25,7 @@ import DownloadDialog from "./components/DownloadDialog";
 import Player, { usePlayer } from "./components/Player";
 import { Brand } from "./components/Brand";
 import { EMPTY_REQUEST, loadComposer, saveComposer } from "./lib/composer";
+import { coverPng } from "./lib/cover";
 import { useLibrary, useMessage } from "./lib/useLibrary";
 import {
   DEFAULT_SETTINGS,
@@ -278,21 +279,25 @@ export default function App() {
         told = true;
         notify(`Getting “${title}” ready to share…`);
       }, 600);
-      return shareSong(song.id, title, {
+      const anchor = {
         x: box.left,
         y: box.top,
         width: box.width,
         height: box.height,
-      }).then(
-        () => {
-          window.clearTimeout(slow);
-          if (told) dismiss();
-        },
-        (error: unknown) => {
-          window.clearTimeout(slow);
-          notify(problem(error, "Sharing could not be opened."));
-        },
-      );
+      };
+      return coverPng(song.id, song.request.style)
+        .catch(() => null)
+        .then((cover) => shareSong(song.id, title, anchor, cover))
+        .then(
+          () => {
+            window.clearTimeout(slow);
+            if (told) dismiss();
+          },
+          (error: unknown) => {
+            window.clearTimeout(slow);
+            notify(problem(error, "Sharing could not be opened."));
+          },
+        );
     },
     onPlaylist: (list) => setPicker({ kind: "playlist", songs: list }),
     onQueue: (list) => {

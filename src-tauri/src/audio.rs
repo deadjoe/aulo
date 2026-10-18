@@ -126,6 +126,56 @@ pub fn waveform_of(path: &Path) -> Result<Vec<f32>, String> {
     Ok(meter.finish())
 }
 
+/// What a saved or shared song file carries besides its audio.
+#[derive(Clone, Debug, Default)]
+pub struct Tags {
+    pub title: String,
+    /// The song's cover as PNG.
+    pub cover: Option<Vec<u8>>,
+}
+
+/// Covers come from the interface; only a real PNG of a sensible size is written.
+pub fn valid_cover(bytes: &[u8]) -> bool {
+    bytes.len() <= 4 * 1024 * 1024 && bytes.starts_with(b"\x89PNG\r\n\x1a\n")
+}
+
+/// Write the title and cover into an MP3, M4A or FLAC file, as music apps and
+/// phones expect them.
+pub fn write_tags(path: &Path, tags: &Tags) -> Result<(), String> {
+    // A tagging library must never take the app down over an unusual file.
+    std::panic::catch_unwind(|| tag_file(path, tags))
+        .unwrap_or_else(|_| Err("the file could not be tagged".into()))
+}
+
+fn tag_file(path: &Path, tags: &Tags) -> Result<(), String> {
+    use lofty::{
+        config::WriteOptions,
+        picture::{MimeType, Picture, PictureType},
+        prelude::*,
+        tag::Tag,
+    };
+    let mut file = lofty::read_from_path(path).map_err(|e| e.to_string())?;
+    let kind = file.primary_tag_type();
+    if file.primary_tag_mut().is_none() {
+        file.insert_tag(Tag::new(kind));
+    }
+    let tag = file.primary_tag_mut().ok_or("no tag")?;
+    if !tags.title.trim().is_empty() {
+        tag.set_title(tags.title.trim().to_string());
+    }
+    if let Some(png) = tags.cover.as_ref().filter(|png| valid_cover(png)) {
+        tag.remove_picture_type(PictureType::CoverFront);
+        tag.push_picture(
+            Picture::unchecked(png.clone())
+                .pic_type(PictureType::CoverFront)
+                .mime_type(MimeType::Png)
+                .build(),
+        );
+    }
+    file.save_to_path(path, WriteOptions::default())
+        .map_err(|e| e.to_string())
+}
+
 /// 24-bit PCM WAV keeps the model's output precision for editing.
 pub fn write_wav(pcm: &Pcm, path: &Path) -> Result<(), String> {
     let spec = hound::WavSpec {
@@ -263,6 +313,111 @@ mod tests {
         let frames = pcm.samples.len() / pcm.channels as usize;
         let expected = frames as f64 / pcm.sample_rate as f64;
         assert!((flac_duration(&path).unwrap() - expected).abs() < 1e-6);
+    }
+
+    const PNG: &[u8] = b"\x89PNG\r\n\x1a\n-cover-bytes-";
+
+    fn read_back(path: &Path) -> (Option<String>, Option<Vec<u8>>) {
+        use lofty::prelude::*;
+        let file = lofty::read_from_path(path).unwrap();
+        let tag = file.primary_tag().unwrap();
+        (
+            tag.title().map(|t| t.to_string()),
+            tag.pictures().first().map(|p| p.data().to_vec()),
+        )
+    }
+
+    fn tags() -> Tags {
+        Tags {
+            title: "Night Drive 夜路".into(),
+            cover: Some(PNG.to_vec()),
+        }
+    }
+
+    #[test]
+    fn mp3_downloads_carry_title_and_cover() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.mp3");
+        write_mp3(&tone(48_000, 1.0), &path).unwrap();
+        let audio_before = std::fs::metadata(&path).unwrap().len();
+        write_tags(&path, &tags()).unwrap();
+        assert_eq!(
+            read_back(&path),
+            (Some("Night Drive 夜路".into()), Some(PNG.to_vec()))
+        );
+        assert!(std::fs::metadata(&path).unwrap().len() > audio_before);
+        // Writing again replaces the cover instead of adding a second one.
+        write_tags(&path, &tags()).unwrap();
+        use lofty::prelude::*;
+        let file = lofty::read_from_path(&path).unwrap();
+        assert_eq!(file.primary_tag().unwrap().pictures().len(), 1);
+    }
+
+    #[test]
+    fn an_unusual_file_is_an_error_not_a_crash() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.flac");
+        // A FLAC with a header but no audio once made the tagging library panic.
+        let mut bytes = b"fLaC".to_vec();
+        bytes.extend([0x80, 0, 0, 34, 0x10, 0x00, 0x10, 0x00, 0, 0, 0, 0, 0, 0]);
+        let packed: u64 = (48_000 << 44) | (1 << 41) | (23 << 36) | 48_000;
+        bytes.extend(packed.to_be_bytes());
+        bytes.extend([0; 16]);
+        std::fs::write(&path, bytes).unwrap();
+        let _ = write_tags(&path, &tags());
+        assert!(write_tags(&dir.path().join("missing.mp3"), &tags()).is_err());
+        assert!(write_tags(&dir.path().join("t.flac").with_extension("txt"), &tags()).is_err());
+    }
+
+    /// AULO_LIVE_FLAC=/path/to/audio.flac cargo test live_flac_tags -- --ignored
+    #[test]
+    #[ignore = "Needs a real song"]
+    fn live_flac_tags_carry_title_and_cover() {
+        let source = std::path::PathBuf::from(std::env::var("AULO_LIVE_FLAC").unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.flac");
+        std::fs::copy(&source, &path).unwrap();
+        write_tags(&path, &tags()).unwrap();
+        assert_eq!(
+            read_back(&path),
+            (Some("Night Drive 夜路".into()), Some(PNG.to_vec()))
+        );
+        // The audio itself is untouched.
+        assert_eq!(
+            decode_flac(&path).unwrap().samples,
+            decode_flac(&source).unwrap().samples
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn m4a_downloads_carry_title_and_cover() {
+        let dir = tempfile::tempdir().unwrap();
+        let wav = dir.path().join("t.wav");
+        let m4a = dir.path().join("t.m4a");
+        write_wav(&tone(48_000, 1.0), &wav).unwrap();
+        let status = std::process::Command::new("/usr/bin/afconvert")
+            .args(["-f", "m4af", "-d", "aac"])
+            .arg(&wav)
+            .arg(&m4a)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        write_tags(&m4a, &tags()).unwrap();
+        assert_eq!(
+            read_back(&m4a),
+            (Some("Night Drive 夜路".into()), Some(PNG.to_vec()))
+        );
+    }
+
+    #[test]
+    fn only_real_png_covers_are_accepted() {
+        assert!(valid_cover(PNG));
+        assert!(!valid_cover(b"GIF89a"));
+        assert!(!valid_cover(b""));
+        let mut huge = PNG.to_vec();
+        huge.resize(5 * 1024 * 1024, 0);
+        assert!(!valid_cover(&huge));
     }
 
     #[test]

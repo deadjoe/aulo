@@ -1,7 +1,13 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
 import SetupWizard from "./components/SetupWizard";
@@ -216,10 +222,14 @@ describe("library", () => {
       "Move to TrashCtrl+Del",
     ]);
     await user.click(within(menu).getByRole("menuitem", { name: "Share" }));
-    expect(songs.shareSong).toHaveBeenCalledWith(
-      "0123456789abcdef0123456789abcdef",
-      "Sunday",
-      expect.objectContaining({ x: expect.any(Number) }),
+    // The cover can't be drawn without a real browser canvas, so none is sent.
+    await waitFor(() =>
+      expect(songs.shareSong).toHaveBeenCalledWith(
+        "0123456789abcdef0123456789abcdef",
+        "Sunday",
+        expect.objectContaining({ x: expect.any(Number) }),
+        null,
+      ),
     );
     await user.click(screen.getByRole("button", { name: "More for Sunday" }));
     await user.click(
@@ -293,6 +303,7 @@ describe("library", () => {
       "0123456789abcdef0123456789abcdef",
       "wav",
       "Sunday",
+      null,
     );
     expect(await screen.findByText("Downloaded.")).toBeVisible();
     expect(localStorage.getItem("aulo.download-format.v1")).toBe("wav");

@@ -63,7 +63,7 @@ Reserved as an independent integration. A later settings flow may connect an exi
 
 ## Visual direction
 
-A night studio: warm graphite surfaces, a peach-to-coral gradient reserved for the things people press, and generated cover art as the one expressive element. Display type is Bricolage Grotesque and interface type is Figtree, both SIL Open Font License fonts bundled with the app (no network fonts). Colours, type and controls live as tokens at the top of `src/styles.css`.
+A night studio: warm graphite surfaces, a peach-to-coral gradient reserved for the things people press, and generated cover art as the one expressive element. Covers are drawn on the computer (`src/lib/cover.ts`): the style picks one of nine compositions and its colours (a synthwave grid for electronic music, hills for folk, mist for lo-fi, a record for jazz and soul, shards for rock, confetti for pop, mountains for cinematic, a sunburst for tropical, blocks for hip hop), and the song id varies the rest, so a song always has the same cover. Downloads (MP3, M4A, FLAC) and shared files carry the song title and the cover as a PNG; WAV stays plain. Display type is Bricolage Grotesque and interface type is Figtree, both SIL Open Font License fonts bundled with the app (no network fonts). Colours, type and controls live as tokens at the top of `src/styles.css`.
 
 The layout follows Suno's logged-in Create page (navigation, create panel, library, bottom player) while excluding social feeds, credits, subscriptions, and public sharing. The first-run guide uses the same surfaces and a cover-art hero. Copy is written for people with no technical background: no model, engine, file or version names appear in normal use, and every error says what to do next.
 

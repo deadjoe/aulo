@@ -15,7 +15,7 @@ Implemented:
 - A native song service with a resident engine: the model stays loaded between songs and is released after 10 idle minutes; a queue, stop, a hang watchdog, crash recovery, keep-awake on macOS, and durable works under the application data folder.
 - Suno-style progress: a spinner on the song's cover and "Creating…", with no technical stage names.
 - Workspaces (with Save to when creating, archiving and renaming) and playlists; multi-select with batch Add to playlist, Add to queue, Move to workspace and Move to Trash, with shortcuts; search, filters, sorting, and List, Waveform and Grid layouts.
-- A library grouped by day with generated cover art and likes; song details with lyrics; a song menu with Create another version, Reuse settings, Rename, Download, Show in Finder, Add to queue, and Move to Trash; and a bottom player.
+- A library grouped by day with covers drawn from each song's style (also written, with the title, into downloaded and shared MP3, M4A and FLAC files) and likes; song details with lyrics; a song menu with Create another version, Reuse settings, Rename, Download, Show in Finder, Add to queue, and Move to Trash; and a bottom player.
 - Engine selection is delegated to GROOVE's own rules (PyTorch on Apple Silicon and large NVIDIA cards, the GGUF engine on smaller NVIDIA cards).
 - Settings (⌘,): notifications when a song is ready, whether Aulo stays ready between songs or frees its memory, storage use with Empty Trash and an optional 30-day automatic empty, the music models (check, download, remove), a placeholder for connecting the user's existing AI assistant, and a problem report that leaves out everything the person wrote.
 

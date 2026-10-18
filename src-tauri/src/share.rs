@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 use tauri::Manager;
 
+use crate::audio::Tags;
 use crate::songs::{export_audio, finished_audio, AudioFormat, SongService};
 
 /// Where the share sheet points from, in the page's CSS pixels.
@@ -49,14 +50,25 @@ pub fn file_name(title: &str, extension: &str) -> String {
     format!("{}.{extension}", stem.trim())
 }
 
+/// Marks a shared copy made with its title and cover written in.
+const TAGGED: &str = ".tagged";
+
 /// Prepare the shared copy, reusing it while the song and its name are unchanged.
 /// Only the most recently shared song is kept.
-pub fn prepare(root: &Path, id: &str, source: &Path, name: &str) -> Result<PathBuf, String> {
+pub fn prepare(
+    root: &Path,
+    id: &str,
+    source: &Path,
+    name: &str,
+    tags: &Tags,
+) -> Result<PathBuf, String> {
     let folder = root.join(id);
     let target = folder.join(name);
     let fresh = match (fs::metadata(&target), fs::metadata(source)) {
         (Ok(copy), Ok(original)) => {
-            copy.len() > 0 && copy.modified().ok() >= original.modified().ok()
+            copy.len() > 0
+                && copy.modified().ok() >= original.modified().ok()
+                && folder.join(TAGGED).exists()
         }
         _ => false,
     };
@@ -72,7 +84,8 @@ pub fn prepare(root: &Path, id: &str, source: &Path, name: &str) -> Result<PathB
     }
     let _ = fs::remove_dir_all(&folder);
     fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
-    export_audio(source, SHARE_FORMAT, &target)?;
+    export_audio(source, SHARE_FORMAT, &target, tags)?;
+    let _ = fs::write(folder.join(TAGGED), b"");
     Ok(target)
 }
 
@@ -84,18 +97,24 @@ pub async fn share_song(
     id: String,
     title: String,
     anchor: Anchor,
+    cover: Option<Vec<u8>>,
 ) -> Result<(), String> {
     let source = finished_audio(&app, &service, &id)?;
+    let tags = Tags {
+        title: title.clone(),
+        cover: cover.filter(|png| crate::audio::valid_cover(png)),
+    };
     let root = app
         .path()
         .app_cache_dir()
         .map_err(|e| e.to_string())?
         .join("share");
     let name = file_name(&title, SHARE_FORMAT.extension());
-    let path = tauri::async_runtime::spawn_blocking(move || prepare(&root, &id, &source, &name))
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|_| "The song could not be prepared for sharing.".to_string())?;
+    let path =
+        tauri::async_runtime::spawn_blocking(move || prepare(&root, &id, &source, &name, &tags))
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|_| "The song could not be prepared for sharing.".to_string())?;
     present(&app, window, path, title, anchor)
 }
 
@@ -258,7 +277,8 @@ mod tests {
         let folder = root.join("song");
         fs::create_dir_all(&folder).unwrap();
         fs::write(folder.join("Song.m4a"), b"ready").unwrap();
-        let path = prepare(&root, "song", &source, "Song.m4a").unwrap();
+        fs::write(folder.join(TAGGED), b"").unwrap();
+        let path = prepare(&root, "song", &source, "Song.m4a", &Tags::default()).unwrap();
         assert_eq!(fs::read(&path).unwrap(), b"ready");
         assert!(!root.join("old").exists());
     }

@@ -1,5 +1,11 @@
 # Validation record
 
+## Covers — 2026-10-19
+
+- `cover.test.ts`: styles map to their compositions (specific genres before broad ones), covers are stable per song and vary between songs and for unknown styles, and nothing a person wrote reaches the SVG markup.
+- Tagging tests: MP3 and M4A (macOS) carry the title and cover and keep a single cover when written twice; only PNG covers under 4 MB are accepted; an unusual file is an error, not a crash. On a real 3:57 song, a tagged FLAC decoded sample for sample like the original (`live_flac_tags_carry_title_and_cover`), and `live_exports_every_format` still produced playable files of the full length. lofty 0.22 corrupted the first audio frame of FLAC files without a padding block; 0.25 is used.
+- The covers were reviewed in a browser preview (setup, library list) with temporary songs that were removed. The canvas PNG step was measured in Chromium (about 0.1 MB, under 0.1 s per cover); it has not been exercised in the macOS app's own web view by hand.
+
 ## Follow-up review — 2026-10-19
 
 - Removing models: the idle engine is now forgotten only after it has exited, so waiting for it (removal, Free up memory now) waits for the real exit; after any removal attempt the model state is read back from disk, so a half-finished removal is never treated as ready (`a_removal_that_stops_halfway_never_leaves_the_models_ready`).

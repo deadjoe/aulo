@@ -127,8 +127,12 @@ export const songWaveform = (id: string) =>
   invoke<number[]>("song_waveform", { id });
 export type AudioFormat = "m4a" | "mp3" | "wav" | "flac";
 /** Save a finished song: Aulo opens the save window. False when it was cancelled. */
-export const exportSong = (id: string, format: AudioFormat, name: string) =>
-  invoke<boolean>("export_song", { id, format, name });
+export const exportSong = (
+  id: string,
+  format: AudioFormat,
+  name: string,
+  cover: number[] | null = null,
+) => invoke<boolean>("export_song", { id, format, name, cover });
 export interface ShareAnchor {
   x: number;
   y: number;
@@ -136,8 +140,12 @@ export interface ShareAnchor {
   height: number;
 }
 /** Open the system share sheet for a finished song, pointing from `anchor`. */
-export const shareSong = (id: string, title: string, anchor: ShareAnchor) =>
-  invoke<void>("share_song", { id, title, anchor });
+export const shareSong = (
+  id: string,
+  title: string,
+  anchor: ShareAnchor,
+  cover: number[] | null = null,
+) => invoke<void>("share_song", { id, title, anchor, cover });
 export const revealSong = (id: string) => invoke<void>("reveal_song", { id });
 export const appVersion = async () => {
   const { getVersion } = await import("@tauri-apps/api/app");
