@@ -512,3 +512,22 @@ fn saved_files_always_end_in_their_format() {
         PathBuf::from("/Users/me/Music/Sunday.v2.flac")
     );
 }
+
+#[test]
+fn a_completed_name_never_replaces_a_file_the_save_window_did_not_ask_about() {
+    let dir = tempfile::tempdir().unwrap();
+    let typed = dir.path().join("foo");
+    assert_eq!(
+        checked_destination(typed.clone(), "wav").unwrap(),
+        dir.path().join("foo.wav")
+    );
+    fs::write(dir.path().join("foo.wav"), b"keep").unwrap();
+    let error = checked_destination(typed, "wav").unwrap_err();
+    assert!(error.contains("“foo.wav” is already there"));
+    assert_eq!(fs::read(dir.path().join("foo.wav")).unwrap(), b"keep");
+    // A name the window showed in full was confirmed there, so it may be replaced.
+    assert_eq!(
+        checked_destination(dir.path().join("foo.wav"), "wav").unwrap(),
+        dir.path().join("foo.wav")
+    );
+}

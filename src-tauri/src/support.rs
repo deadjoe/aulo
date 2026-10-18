@@ -156,7 +156,7 @@ pub async fn save_report(
     app: tauri::AppHandle,
     service: tauri::State<'_, SongService>,
 ) -> Result<bool, String> {
-    let Some(destination) = crate::songs::choose_save_path(&app, "Aulo problem report.txt", "txt")
+    let Some(destination) = crate::songs::choose_save_path(&app, "Aulo problem report.txt", "txt")?
     else {
         return Ok(false);
     };

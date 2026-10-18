@@ -879,19 +879,24 @@ pub async fn release_engine(service: tauri::State<'_, SongService>) -> Result<()
         })
 }
 
+// Async so the first hardware check (which runs nvidia-smi on Windows) never runs
+// on the main thread.
 #[tauri::command]
-pub fn create_song(
+pub async fn create_song(
     app: tauri::AppHandle,
-    service: tauri::State<SongService>,
+    service: tauri::State<'_, SongService>,
     request: SongRequest,
     workspace: Option<String>,
 ) -> Result<Work, String> {
     request.validate()?;
+    let hardware = tauri::async_runtime::spawn_blocking(crate::creation_hardware_blocker)
+        .await
+        .map_err(|e| e.to_string())?;
     let workspace = workspace.unwrap_or_else(default_workspace);
     if !service.with_state(&app, |state| state.collections.has_workspace(&workspace))? {
         return Err("That workspace no longer exists.".into());
     }
-    if let Some(reason) = crate::creation_hardware_blocker() {
+    if let Some(reason) = hardware {
         return Err(reason.into());
     }
     if app.state::<engine::EngineCache>().ready().is_none()
@@ -1100,7 +1105,7 @@ pub async fn export_song(
     // The person picks the place in the system's own save window, opened here, so the
     // interface can never name a file for Aulo to write. False means they cancelled.
     let Some(destination) =
-        choose_save_path(&app, &crate::share::file_name(&name, extension), extension)
+        choose_save_path(&app, &crate::share::file_name(&name, extension), extension)?
     else {
         return Ok(false);
     };
@@ -1114,22 +1119,37 @@ pub async fn export_song(
 }
 
 /// Ask where to save a file with the system's save window. The chosen name always ends
-/// in `extension`; None when the person cancels.
+/// in `extension`; Ok(None) when the person cancels.
 pub(crate) fn choose_save_path(
     app: &tauri::AppHandle,
     file_name: &str,
     extension: &str,
-) -> Option<PathBuf> {
+) -> Result<Option<PathBuf>, String> {
     use tauri_plugin_dialog::DialogExt;
-    let chosen = app
+    let Some(chosen) = app
         .dialog()
         .file()
         .set_file_name(file_name)
         .add_filter(extension.to_uppercase(), &[extension])
-        .blocking_save_file()?
-        .into_path()
-        .ok()?;
-    Some(with_extension(chosen, extension))
+        .blocking_save_file()
+        .and_then(|path| path.into_path().ok())
+    else {
+        return Ok(None);
+    };
+    checked_destination(chosen, extension).map(Some)
+}
+
+/// The chosen path with its extension. The save window only asked about replacing the
+/// name as typed, so a file that exists under the completed name is never replaced.
+fn checked_destination(chosen: PathBuf, extension: &str) -> Result<PathBuf, String> {
+    let completed = with_extension(chosen.clone(), extension);
+    if completed != chosen && completed.exists() {
+        let name = completed.file_name().unwrap_or_default().to_string_lossy();
+        return Err(format!(
+            "A file named “{name}” is already there. Choose another name."
+        ));
+    }
+    Ok(completed)
 }
 
 /// `path` ending in `.extension`, keeping a name that already does.
