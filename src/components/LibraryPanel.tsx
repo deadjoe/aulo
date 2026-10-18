@@ -46,6 +46,7 @@ export default function LibraryPanel({
   emptyAction,
   actions,
   list,
+  ordered = false,
 }: {
   songs: Song[];
   header: ReactNode;
@@ -54,6 +55,8 @@ export default function LibraryPanel({
   emptyText: string;
   emptyAction?: ReactNode;
   actions: SongActions;
+  /** Keep the given order (for History) instead of sorting. */
+  ordered?: boolean;
   list: Omit<
     SongListProps,
     | "groups"
@@ -198,7 +201,7 @@ export default function LibraryPanel({
           </span>
         </div>
       ) : (
-        <LibraryToolbar view={view} onChange={setView} />
+        <LibraryToolbar view={view} onChange={setView} sortable={!ordered} />
       )}
       {songs.length === 0 ? (
         <div className="empty-library">

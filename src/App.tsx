@@ -7,6 +7,7 @@ import {
   Link2,
   Play,
   Settings2,
+  Trash2,
   WandSparkles,
   X,
 } from "lucide-react";
@@ -19,6 +20,8 @@ import LibraryPanel from "./components/LibraryPanel";
 import CollectionsView from "./components/CollectionsView";
 import PickerDialog from "./components/PickerDialog";
 import SaveToMenu from "./components/SaveToMenu";
+import ConfirmDialog from "./components/ConfirmDialog";
+import TrashView from "./components/TrashView";
 import SongDetail from "./components/SongDetail";
 import type { SongActions } from "./components/SongMenu";
 import DownloadDialog from "./components/DownloadDialog";
@@ -26,6 +29,7 @@ import Player, { usePlayer } from "./components/Player";
 import { Brand } from "./components/Brand";
 import { EMPTY_REQUEST, loadComposer, saveComposer } from "./lib/composer";
 import { useLibrary, useMessage } from "./lib/useLibrary";
+import { loadHistory, recordPlay, saveHistory } from "./lib/history";
 import {
   addToPlaylist,
   archiveWorkspace,
@@ -35,6 +39,8 @@ import {
   creationStatus,
   DEFAULT_WORKSPACE,
   deletePlaylist,
+  deleteSongs,
+  deleteWorkspace,
   displayTitle,
   moveSongs,
   removeFromPlaylist,
@@ -50,6 +56,13 @@ import {
 
 type Page = "create" | "library";
 type Modal = { kind: "settings" } | { kind: "agent" };
+type LibraryTab = "songs" | "playlists" | "workspaces" | "history";
+interface Confirmation {
+  title: string;
+  body: string;
+  confirm: string;
+  run: () => void;
+}
 type Picker =
   { kind: "playlist"; songs: Song[] } | { kind: "workspace"; songs: Song[] };
 
@@ -88,14 +101,26 @@ export default function App() {
   const [status, setStatus] = useState<CreationStatus | null>(null);
   const [creating, setCreating] = useState(false);
   const { message, undo, notify, dismiss } = useMessage();
-  const { songs, collections, start, remove } = useLibrary(explored, notify);
+  const {
+    songs: allSongs,
+    collections,
+    start,
+    remove,
+  } = useLibrary(explored, notify);
+  // Songs in Aulo's Trash only appear in the Trash.
+  const songs = allSongs.filter((s) => !s.trashedMs);
+  const trashed = allSongs.filter((s) => s.trashedMs);
   const [workspaceId, setWorkspaceId] = useState(() =>
     remembered("aulo.workspace.v1", DEFAULT_WORKSPACE),
   );
   const [saveTo, setSaveTo] = useState(workspaceId);
   const [browsing, setBrowsing] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
-  const [libraryTab, setLibraryTab] = useState<"songs" | "playlists">("songs");
+  const [libraryTab, setLibraryTab] = useState<LibraryTab>("songs");
+  const [libraryWorkspace, setLibraryWorkspace] = useState<string | null>(null);
+  const [showTrash, setShowTrash] = useState(false);
+  const [confirming, setConfirming] = useState<Confirmation | null>(null);
+  const [history, setHistory] = useState(loadHistory);
   const [playlistId, setPlaylistId] = useState<string | null>(null);
   const [picker, setPicker] = useState<Picker | null>(null);
   const liveWorkspaces = collections.workspaces.filter((w) => !w.archived);
@@ -114,6 +139,15 @@ export default function App() {
   const [renaming, setRenaming] = useState<string | null>(null);
   const [downloading, setDownloading] = useState<Song | null>(null);
   const player = usePlayer(songs);
+  useEffect(() => {
+    const id = player.current?.id;
+    if (!id) return;
+    setHistory((h) => {
+      const next = recordPlay(h, id);
+      saveHistory(next);
+      return next;
+    });
+  }, [player.current?.id]);
   const openSong = songs.find((s) => s.id === openId) ?? null;
 
   const refreshStatus = useCallback(() => {
@@ -204,17 +238,25 @@ export default function App() {
     },
     onMove: (list) => setPicker({ kind: "workspace", songs: list }),
     onTrash: (list) =>
-      void trashSongs(list.map((s) => s.id)).then(
-        (moved) => {
-          remove(moved);
-          if (openId && moved.includes(openId)) setOpenId(null);
-          notify(`Moved ${titleOf(list)} to the Trash.`);
-        },
-        (error: unknown) =>
-          notify(
-            problem(error, "These songs could not be moved to the Trash."),
+      setConfirming({
+        title: `Move ${titleOf(list)} to the Trash?`,
+        body: "You can restore songs from the Trash in your Library until you delete them.",
+        confirm: "Move to Trash",
+        run: () =>
+          void trashSongs(list.map((s) => s.id)).then(
+            (moved) => {
+              if (openId && moved.includes(openId)) setOpenId(null);
+              notify(
+                `Moved ${titleOf(list)} to the Trash.`,
+                () => void trashSongs(moved, false),
+              );
+            },
+            (error: unknown) =>
+              notify(
+                problem(error, "These songs could not be moved to the Trash."),
+              ),
           ),
-      ),
+      }),
     onRemoveFromPlaylist: playlist
       ? (list) =>
           void act(
@@ -267,6 +309,76 @@ export default function App() {
     songs: songs.filter((s) => s.workspace === w.id),
   }));
 
+  const confirmDeleteWorkspace = (id: string) => {
+    const target = collections.workspaces.find((w) => w.id === id);
+    if (!target) return;
+    const n = songs.filter((s) => s.workspace === id).length;
+    setConfirming({
+      title: `Delete ${target.name}?`,
+      body: n
+        ? `Its ${count(n, "song")} will move to My Workspace.`
+        : "This workspace is empty.",
+      confirm: "Delete workspace",
+      run: () =>
+        void act(
+          deleteWorkspace(id).then(() => {
+            if (id === workspace.id) openWorkspace(DEFAULT_WORKSPACE);
+            if (id === libraryWorkspace) setLibraryWorkspace(null);
+            notify(`Deleted ${target.name}.`);
+          }),
+          "The workspace could not be deleted.",
+        ),
+    });
+  };
+  const workspacesView = (onOpen: (id: string) => void, currentId?: string) => (
+    <CollectionsView
+      kind="workspace"
+      rows={workspaceRows}
+      currentId={currentId}
+      showArchived={showArchived}
+      onToggleArchived={() => setShowArchived(!showArchived)}
+      onOpen={onOpen}
+      onCreate={async (name) => {
+        const created = await createWorkspace(name);
+        onOpen(created.id);
+      }}
+      onRename={(id, name) => renameWorkspace(id, name)}
+      onArchive={(id, archived) =>
+        void act(
+          archiveWorkspace(id, archived).then(() => {
+            if (archived && id === workspace.id)
+              openWorkspace(DEFAULT_WORKSPACE);
+            notify(archived ? "Workspace archived." : "Workspace restored.");
+          }),
+          "The workspace could not be changed.",
+        )
+      }
+      onDelete={confirmDeleteWorkspace}
+    />
+  );
+  const workspacePanel = (
+    target: (typeof collections.workspaces)[number],
+    crumbs: React.ReactNode,
+  ) => (
+    <LibraryPanel
+      songs={songs.filter((s) => s.workspace === target.id)}
+      viewKey={`workspace-${target.id}`}
+      header={crumbs}
+      emptyTitle={
+        target.id === DEFAULT_WORKSPACE
+          ? "Your songs will live here"
+          : `${target.name} is empty`
+      }
+      emptyText={
+        target.id === DEFAULT_WORKSPACE
+          ? "Describe a sound, add your words, and press Create."
+          : "Create a song here, or move songs in from another workspace."
+      }
+      actions={actions}
+      list={listProps}
+    />
+  );
+
   let right;
   if (page === "create" && browsing)
     right = (
@@ -276,143 +388,200 @@ export default function App() {
             <span>Workspaces</span>
           </nav>
         </header>
-        <CollectionsView
-          kind="workspace"
-          rows={workspaceRows}
-          currentId={workspace.id}
-          showArchived={showArchived}
-          onToggleArchived={() => setShowArchived(!showArchived)}
-          onOpen={openWorkspace}
-          onCreate={async (name) => {
-            const created = await createWorkspace(name);
-            openWorkspace(created.id);
-          }}
-          onRename={(id, name) => renameWorkspace(id, name)}
-          onArchive={(id, archived) =>
-            void act(
-              archiveWorkspace(id, archived).then(() => {
-                if (archived && id === workspace.id)
-                  openWorkspace(DEFAULT_WORKSPACE);
-                notify(
-                  archived ? "Workspace archived." : "Workspace restored.",
-                );
-              }),
-              "The workspace could not be changed.",
-            )
-          }
-        />
+        {workspacesView(openWorkspace, workspace.id)}
       </main>
     );
   else if (page === "create")
-    right = (
-      <LibraryPanel
-        songs={songs.filter((s) => s.workspace === workspace.id)}
-        viewKey={`workspace-${workspace.id}`}
-        header={
-          <nav className="crumbs" aria-label="Workspace">
-            <button onClick={() => setBrowsing(true)}>Workspaces</button>
-            <ChevronRight size={16} />
-            <span>{workspace.name}</span>
-          </nav>
-        }
-        emptyTitle={
-          workspace.id === DEFAULT_WORKSPACE
-            ? "Your songs will live here"
-            : `${workspace.name} is empty`
-        }
-        emptyText={
-          workspace.id === DEFAULT_WORKSPACE
-            ? "Describe a sound, add your words, and press Create."
-            : "Create a song here, or move songs in from another workspace."
-        }
-        actions={actions}
-        list={listProps}
-      />
+    right = workspacePanel(
+      workspace,
+      <nav className="crumbs" aria-label="Workspace">
+        <button onClick={() => setBrowsing(true)}>Workspaces</button>
+        <ChevronRight size={16} />
+        <span>{workspace.name}</span>
+      </nav>,
     );
-  else if (libraryTab === "playlists" && playlist) {
-    const inPlaylist = songsIn(playlist.songIds);
-    const playable = inPlaylist.filter(
-      (s) => s.state === "completed" && s.audioPath,
-    );
-    right = (
-      <LibraryPanel
-        songs={inPlaylist}
-        viewKey={`playlist-${playlist.id}`}
-        header={
-          <>
-            <nav className="crumbs" aria-label="Playlist">
-              <button onClick={() => setPlaylistId(null)}>Playlists</button>
-              <ChevronRight size={16} />
-              <span>{playlist.name}</span>
-            </nav>
-            <button
-              className="primary small"
-              disabled={!playable.length}
-              onClick={() => player.playAll(playable)}
-            >
-              <Play size={15} fill="currentColor" /> Play all
-            </button>
-          </>
-        }
-        emptyTitle="This playlist is empty"
-        emptyText="Choose “Add to playlist” on any song to add it here."
-        actions={actions}
-        list={listProps}
-      />
-    );
-  } else {
-    const tabs = (
-      <div className="tabs" role="tablist" aria-label="Library">
-        {(["songs", "playlists"] as const).map((tab) => (
+  else {
+    const libraryHead = (
+      <div className="library-title">
+        <div className="library-title-row">
+          <h1>{showTrash ? "Trash" : "Library"}</h1>
           <button
-            key={tab}
-            role="tab"
-            aria-selected={libraryTab === tab}
-            className={libraryTab === tab ? "selected" : ""}
-            onClick={() => {
-              setLibraryTab(tab);
-              setPlaylistId(null);
-            }}
+            className={`tool-pill${showTrash ? " selected" : ""}`}
+            aria-pressed={showTrash}
+            onClick={() => setShowTrash(!showTrash)}
           >
-            {tab === "songs" ? "Songs" : "Playlists"}
+            <Trash2 size={15} />
+            Trash{trashed.length > 0 && ` (${trashed.length})`}
           </button>
-        ))}
+        </div>
+        {!showTrash && (
+          <div className="tabs" role="tablist" aria-label="Library">
+            {(
+              [
+                ["songs", "Songs"],
+                ["playlists", "Playlists"],
+                ["workspaces", "Workspaces"],
+                ["history", "History"],
+              ] as [LibraryTab, string][]
+            ).map(([tab, label]) => (
+              <button
+                key={tab}
+                role="tab"
+                aria-selected={libraryTab === tab}
+                className={libraryTab === tab ? "selected" : ""}
+                onClick={() => {
+                  setLibraryTab(tab);
+                  setPlaylistId(null);
+                  setLibraryWorkspace(null);
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     );
-    right =
-      libraryTab === "songs" ? (
+    const shownWorkspace = collections.workspaces.find(
+      (w) => w.id === libraryWorkspace,
+    );
+    if (showTrash)
+      right = (
+        <main className="library" aria-label="Trash">
+          <header className="library-head">{libraryHead}</header>
+          <TrashView
+            songs={trashed}
+            onRestore={(list) =>
+              void act(
+                trashSongs(
+                  list.map((s) => s.id),
+                  false,
+                ).then(() => notify(`Restored ${titleOf(list)}.`)),
+                "These songs could not be restored.",
+              )
+            }
+            onDelete={(list) =>
+              setConfirming({
+                title: `Delete ${titleOf(list)} for good?`,
+                body: "They will be removed from Aulo. This can’t be undone in Aulo.",
+                confirm: "Delete",
+                run: () =>
+                  void act(
+                    deleteSongs(list.map((s) => s.id)).then((gone) => {
+                      remove(gone);
+                      notify(`Deleted ${titleOf(list)}.`);
+                    }),
+                    "Some songs could not be deleted.",
+                  ),
+              })
+            }
+          />
+        </main>
+      );
+    else if (libraryTab === "playlists" && playlist) {
+      const inPlaylist = songsIn(playlist.songIds);
+      const playable = inPlaylist.filter(
+        (s) => s.state === "completed" && s.audioPath,
+      );
+      right = (
         <LibraryPanel
-          songs={songs}
-          viewKey="library"
-          header={tabs}
-          emptyTitle="Your songs will live here"
-          emptyText="Every song you make appears in your library."
-          emptyAction={createButton}
+          songs={inPlaylist}
+          viewKey={`playlist-${playlist.id}`}
+          header={
+            <>
+              <nav className="crumbs" aria-label="Playlist">
+                <button onClick={() => setPlaylistId(null)}>Playlists</button>
+                <ChevronRight size={16} />
+                <span>{playlist.name}</span>
+              </nav>
+              <button
+                className="primary small"
+                disabled={!playable.length}
+                onClick={() => player.playAll(playable)}
+              >
+                <Play size={15} fill="currentColor" /> Play all
+              </button>
+            </>
+          }
+          emptyTitle="This playlist is empty"
+          emptyText="Choose “Add to playlist” on any song to add it here."
           actions={actions}
           list={listProps}
         />
-      ) : (
-        <main className="library" aria-label="Playlists">
-          <header className="library-head">{tabs}</header>
-          <CollectionsView
-            kind="playlist"
-            rows={collections.playlists.map((p) => ({
-              ...p,
-              songs: songsIn(p.songIds),
-            }))}
-            onOpen={setPlaylistId}
-            onCreate={async (name) => {
-              const created = await createPlaylist(name, []);
-              setPlaylistId(created.id);
-            }}
-            onRename={(id, name) => renamePlaylist(id, name)}
-            onDelete={(id) =>
-              void act(
-                deletePlaylist(id).then(() => notify("Playlist deleted.")),
-                "The playlist could not be deleted.",
-              )
-            }
-          />
+      );
+    } else if (libraryTab === "workspaces" && shownWorkspace)
+      right = workspacePanel(
+        shownWorkspace,
+        <nav className="crumbs" aria-label="Workspace">
+          <button onClick={() => setLibraryWorkspace(null)}>Workspaces</button>
+          <ChevronRight size={16} />
+          <span>{shownWorkspace.name}</span>
+        </nav>,
+      );
+    else if (libraryTab === "songs" || libraryTab === "history")
+      right = (
+        <LibraryPanel
+          songs={
+            libraryTab === "songs"
+              ? songs
+              : songsIn(history.map((p) => p.id)).filter(
+                  (s) => s.state === "completed",
+                )
+          }
+          viewKey={libraryTab === "songs" ? "library" : "history"}
+          header={libraryHead}
+          ordered={libraryTab === "history"}
+          emptyTitle={
+            libraryTab === "songs"
+              ? "Your songs will live here"
+              : "Nothing played yet"
+          }
+          emptyText={
+            libraryTab === "songs"
+              ? "Every song you make appears in your library."
+              : "Songs you listen to show up here, most recent first."
+          }
+          emptyAction={libraryTab === "songs" ? createButton : undefined}
+          actions={actions}
+          list={listProps}
+        />
+      );
+    else
+      right = (
+        <main className="library" aria-label={libraryTab}>
+          <header className="library-head">{libraryHead}</header>
+          {libraryTab === "workspaces" ? (
+            workspacesView(setLibraryWorkspace)
+          ) : (
+            <CollectionsView
+              kind="playlist"
+              rows={collections.playlists.map((p) => ({
+                ...p,
+                songs: songsIn(p.songIds),
+              }))}
+              onOpen={setPlaylistId}
+              onCreate={async (name) => {
+                const created = await createPlaylist(name, []);
+                setPlaylistId(created.id);
+              }}
+              onRename={(id, name) => renamePlaylist(id, name)}
+              onDelete={(id) => {
+                const target = collections.playlists.find((p) => p.id === id);
+                setConfirming({
+                  title: `Delete ${target?.name ?? "this playlist"}?`,
+                  body: "The songs stay in your library.",
+                  confirm: "Delete playlist",
+                  run: () =>
+                    void act(
+                      deletePlaylist(id).then(() =>
+                        notify("Playlist deleted."),
+                      ),
+                      "The playlist could not be deleted.",
+                    ),
+                });
+              }}
+            />
+          )}
         </main>
       );
   }
@@ -440,6 +609,7 @@ export default function App() {
             onClick={() => {
               setPage("library");
               setOpenId(null);
+              setShowTrash(false);
             }}
           >
             <Library />
@@ -508,7 +678,7 @@ export default function App() {
       </div>
       <Player
         player={player}
-        onFavorite={favorite}
+        actions={actions}
         onOpen={(song) => setOpenId(song.id)}
       />
       {message && (
@@ -534,6 +704,15 @@ export default function App() {
             <X size={15} />
           </button>
         </div>
+      )}
+      {confirming && (
+        <ConfirmDialog
+          title={confirming.title}
+          body={confirming.body}
+          confirm={confirming.confirm}
+          onConfirm={confirming.run}
+          onClose={() => setConfirming(null)}
+        />
       )}
       {picker && (
         <PickerDialog

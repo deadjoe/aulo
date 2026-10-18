@@ -19,9 +19,11 @@ const FILTER_LABELS: Record<keyof Filters, string> = {
 export default function LibraryToolbar({
   view,
   onChange,
+  sortable = true,
 }: {
   view: ViewOptions;
   onChange: (view: ViewOptions) => void;
+  sortable?: boolean;
 }) {
   const count = activeFilterCount(view.filters);
   const toggle = (key: keyof Filters) =>
@@ -53,16 +55,18 @@ export default function LibraryToolbar({
         )}
         onSelect={toggle}
       />
-      <Dropdown<Sort>
-        label={SORT_LABELS[view.sort]}
-        icon={<ListFilter size={15} />}
-        options={(Object.keys(SORT_LABELS) as Sort[]).map((value) => ({
-          value,
-          label: SORT_LABELS[value],
-        }))}
-        selected={[view.sort]}
-        onSelect={(sort) => onChange({ ...view, sort })}
-      />
+      {sortable && (
+        <Dropdown<Sort>
+          label={SORT_LABELS[view.sort]}
+          icon={<ListFilter size={15} />}
+          options={(Object.keys(SORT_LABELS) as Sort[]).map((value) => ({
+            value,
+            label: SORT_LABELS[value],
+          }))}
+          selected={[view.sort]}
+          onSelect={(sort) => onChange({ ...view, sort })}
+        />
+      )}
       <Dropdown<Layout>
         label={LAYOUT_LABELS[view.layout]}
         icon={<LayoutList size={15} />}

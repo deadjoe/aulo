@@ -29,6 +29,8 @@ export interface Song {
   audioPath: string | null;
   message: string | null;
   workspace: string;
+  /** Set while the song is in Aulo's Trash. */
+  trashedMs: number | null;
 }
 export const DEFAULT_WORKSPACE = "default";
 export interface Workspace {
@@ -84,8 +86,14 @@ export const updateSong = (
   id: string,
   changes: { title?: string; favorite?: boolean },
 ) => invoke<void>("update_song", { id, ...changes });
-export const trashSongs = (ids: string[]) =>
-  invoke<string[]>("trash_songs", { ids });
+/** Move songs into Aulo's Trash, or restore them from it. */
+export const trashSongs = (ids: string[], trashed = true) =>
+  invoke<string[]>("trash_songs", { ids, trashed });
+/** Delete songs in the Trash for good (their files go to the system trash). */
+export const deleteSongs = (ids: string[]) =>
+  invoke<string[]>("delete_songs", { ids });
+export const deleteWorkspace = (id: string) =>
+  invoke<void>("delete_workspace", { id });
 export const listCollections = () =>
   isTauri()
     ? invoke<Collections>("list_collections")

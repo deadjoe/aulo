@@ -154,6 +154,18 @@ impl Collections {
         Ok(())
     }
 
+    pub fn delete_workspace(&mut self, id: &str) -> Result<(), String> {
+        if id == DEFAULT_WORKSPACE {
+            return Err("My Workspace can’t be deleted.".into());
+        }
+        let before = self.workspaces.len();
+        self.workspaces.retain(|w| w.id != id);
+        if before == self.workspaces.len() {
+            return Err("Unknown workspace.".into());
+        }
+        Ok(())
+    }
+
     pub fn create_playlist(
         &mut self,
         id: String,
@@ -267,6 +279,10 @@ mod tests {
         c.rename_workspace("a", "Late night drives").unwrap();
         c.set_archived("a", true).unwrap();
         assert!(c.workspaces[1].archived);
+        assert!(c.delete_workspace(DEFAULT_WORKSPACE).is_err());
+        c.delete_workspace("a").unwrap();
+        assert_eq!(c.workspaces.len(), 1);
+        assert!(c.delete_workspace("a").is_err());
     }
 
     #[test]

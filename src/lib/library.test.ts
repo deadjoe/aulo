@@ -23,6 +23,7 @@ const song = (id: string, state: Song["state"] = "completed"): Song => ({
   audioPath: null,
   message: null,
   workspace: "default",
+  trashedMs: null,
 });
 
 describe("library updates", () => {

@@ -110,6 +110,9 @@ pub struct Work {
     /// The workspace the song belongs to; older records belong to My Workspace.
     #[serde(default = "default_workspace")]
     pub workspace: String,
+    /// Set while the song is in Aulo's Trash; it can be restored until deleted.
+    #[serde(default)]
+    pub trashed_ms: Option<u64>,
 }
 
 fn default_workspace() -> String {
@@ -699,6 +702,7 @@ pub fn create_song(
         audio_path: None,
         message: None,
         workspace,
+        trashed_ms: None,
     };
     write_record(&root, &work)?;
     service.with_state(&app, |state| {
@@ -921,50 +925,70 @@ pub fn reveal_library(app: tauri::AppHandle) -> Result<(), String> {
         .map_err(|_| "The songs folder could not be opened.".into())
 }
 
-/// Move songs to the computer's trash, so they can still be restored from there.
-/// Returns the songs that were moved; any that could not be moved are reported.
+/// Put songs in Aulo's Trash, or take them out again. Songs being made cannot be trashed.
 #[tauri::command]
 pub fn trash_songs(
     app: tauri::AppHandle,
     service: tauri::State<SongService>,
     ids: Vec<String>,
+    trashed: bool,
 ) -> Result<Vec<String>, String> {
-    if ids.is_empty() || ids.iter().any(|id| !valid_id(id)) {
+    let changed: Vec<String> = service.with_state(&app, |state| {
+        state
+            .works
+            .iter()
+            .filter(|w| ids.contains(&w.id) && !w.active())
+            .filter(|w| w.trashed_ms.is_some() != trashed)
+            .map(|w| w.id.clone())
+            .collect()
+    })?;
+    let now = now_ms();
+    for id in &changed {
+        service.update(&app, id, true, |work| {
+            work.trashed_ms = trashed.then_some(now);
+        });
+    }
+    if changed.is_empty() && trashed {
+        return Err("Stop these songs before moving them to the Trash.".into());
+    }
+    Ok(changed)
+}
+
+/// Delete songs from Aulo's Trash for good. Their folders go to the computer's
+/// trash, the last chance to get them back.
+#[tauri::command]
+pub fn delete_songs(
+    app: tauri::AppHandle,
+    service: tauri::State<SongService>,
+    ids: Vec<String>,
+) -> Result<Vec<String>, String> {
+    if ids.iter().any(|id| !valid_id(id)) {
         return Err("Unknown song.".into());
     }
     let root = library_root(&app)?;
-    let movable: Vec<String> = service.with_state(&app, |state| {
-        ids.iter()
-            .filter(|id| state.works.iter().any(|w| &w.id == *id && !w.active()))
-            .cloned()
+    let deletable: Vec<String> = service.with_state(&app, |state| {
+        state
+            .works
+            .iter()
+            .filter(|w| ids.contains(&w.id) && w.trashed_ms.is_some())
+            .map(|w| w.id.clone())
             .collect()
     })?;
-    if movable.is_empty() {
-        return Err("Stop these songs before moving them to the Trash.".into());
-    }
     // The system trash can be slow; keep the library unlocked meanwhile.
-    let moved: Vec<String> = movable
+    let deleted: Vec<String> = deletable
         .into_iter()
         .filter(|id| trash::delete(root.join(id)).is_ok())
         .collect();
     service.with_state(&app, |state| -> Result<(), String> {
-        state.works.retain(|w| !moved.contains(&w.id));
-        state.collections.forget_songs(&moved);
+        state.works.retain(|w| !deleted.contains(&w.id));
+        state.collections.forget_songs(&deleted);
         state.collections.save(&root)
     })??;
     SongService::publish_collections(&app, &service);
-    if moved.len() < ids.len() {
-        return Err(if moved.is_empty() {
-            "These songs could not be moved to the Trash.".into()
-        } else {
-            format!(
-                "{} of {} songs were moved to the Trash.",
-                moved.len(),
-                ids.len()
-            )
-        });
+    if deleted.len() < ids.len() {
+        return Err("Some songs could not be deleted.".into());
     }
-    Ok(moved)
+    Ok(deleted)
 }
 
 #[tauri::command]
@@ -1022,6 +1046,30 @@ pub fn archive_workspace(
     archived: bool,
 ) -> Result<(), String> {
     change_collections(&app, &service, |c| c.set_archived(&id, archived))
+}
+
+/// Delete a workspace; its songs move to My Workspace.
+#[tauri::command]
+pub fn delete_workspace(
+    app: tauri::AppHandle,
+    service: tauri::State<SongService>,
+    id: String,
+) -> Result<(), String> {
+    change_collections(&app, &service, |c| c.delete_workspace(&id))?;
+    let ids: Vec<String> = service.with_state(&app, |state| {
+        state
+            .works
+            .iter()
+            .filter(|w| w.workspace == id)
+            .map(|w| w.id.clone())
+            .collect()
+    })?;
+    for song in ids {
+        service.update(&app, &song, true, |work| {
+            work.workspace = DEFAULT_WORKSPACE.into()
+        });
+    }
+    Ok(())
 }
 
 #[tauri::command]
