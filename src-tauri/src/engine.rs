@@ -109,19 +109,37 @@ fn parse_probe(bytes: &[u8]) -> Result<EngineStatus, String> {
     })
 }
 
-pub fn interpreter(base: &Path) -> PathBuf {
+/// The engine's Python inside an engine directory built by `scripts/build_engine.py`.
+fn engine_python(engine: &Path) -> PathBuf {
+    if cfg!(target_os = "windows") {
+        engine.join("python/python.exe")
+    } else {
+        engine.join("python/bin/python3")
+    }
+}
+
+/// The engine that ships inside Aulo's bundle. Development builds may instead use
+/// `AULO_DEV_PYTHON`, or an engine built into `src-tauri/engine`.
+pub fn interpreter(resources: &Path) -> PathBuf {
     #[cfg(debug_assertions)]
-    if let Some(path) = std::env::var_os("AULO_DEV_PYTHON") {
-        let path = PathBuf::from(path);
-        if path.is_absolute() {
-            return path;
+    {
+        if let Some(path) = std::env::var_os("AULO_DEV_PYTHON") {
+            let path = PathBuf::from(path);
+            if path.is_absolute() {
+                return path;
+            }
+        }
+        let built = engine_python(&Path::new(env!("CARGO_MANIFEST_DIR")).join("engine"));
+        if built.is_file() {
+            return built;
         }
     }
-    if cfg!(target_os = "windows") {
-        base.join("runtime/python/python.exe")
-    } else {
-        base.join("runtime/python/bin/python3")
-    }
+    engine_python(&resources.join("engine"))
+}
+
+/// Where the bundled engine lives: the app's resource directory.
+pub fn resources(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    app.path().resource_dir().map_err(|e| e.to_string())
 }
 
 /// The bridge is compiled into the app and written to a private temporary file per run.
@@ -142,6 +160,8 @@ pub fn bridge_command(python: &Path, script: &Path, base: &Path) -> Command {
         .env("TRANSFORMERS_OFFLINE", "1")
         .env("PYTHONIOENCODING", "utf-8")
         .env("PYTHONUTF8", "1")
+        // The bundled engine is read-only and signed; never write bytecode into it.
+        .env("PYTHONDONTWRITEBYTECODE", "1")
         // GROOVE's Apple Silicon memory guard: keep PyTorch from driving the Mac into swap.
         .env("PYTORCH_MPS_HIGH_WATERMARK_RATIO", "0.8")
         .env("PYTORCH_MPS_LOW_WATERMARK_RATIO", "0.5")
@@ -149,8 +169,13 @@ pub fn bridge_command(python: &Path, script: &Path, base: &Path) -> Command {
         .env("YUE2_GROOVE_GGUF", base.join("models").join("gguf"))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped());
-    let binaries = base.join("runtime").join("yue2cpp");
-    if binaries.is_dir() {
+    // GGUF engine binaries ship beside the bundled Python (`engine/yue2cpp`).
+    let binaries = python
+        .ancestors()
+        .find(|dir| dir.file_name().is_some_and(|name| name == "python"))
+        .and_then(Path::parent)
+        .map(|engine| engine.join("yue2cpp"));
+    if let Some(binaries) = binaries.filter(|dir| dir.is_dir()) {
         command.env("YUE2_GROOVE_YUE2CPP", binaries);
     }
     #[cfg(target_os = "windows")]
@@ -204,12 +229,13 @@ fn probe_process(python: &Path, base: &Path, timeout: Duration) -> Result<Engine
     parse_probe(&bytes)
 }
 
-pub fn inspect(base: &Path) -> EngineStatus {
-    let python = interpreter(base);
+pub fn inspect(base: &Path, resources: &Path) -> EngineStatus {
+    let python = interpreter(resources);
     if !python.is_file() {
+        // The engine ships inside Aulo, so this only happens to a damaged install.
         return EngineStatus::unavailable(
             "not_installed",
-            "The music engine is not installed on this computer yet.",
+            "Part of Aulo is missing. Reinstall Aulo to fix it.",
         );
     }
     probe_process(&python, base, Duration::from_secs(60)).unwrap_or_else(|_| {
@@ -226,7 +252,8 @@ pub async fn engine_status(app: tauri::AppHandle) -> Result<EngineStatus, String
         return Ok(status);
     }
     let base = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let status = tauri::async_runtime::spawn_blocking(move || inspect(&base))
+    let resources = resources(&app)?;
+    let status = tauri::async_runtime::spawn_blocking(move || inspect(&base, &resources))
         .await
         .map_err(|e| e.to_string())?;
     app.state::<EngineCache>()

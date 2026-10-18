@@ -1,5 +1,12 @@
 # Validation record
 
+## Bundled engine — 2026-10-18
+
+- `scripts/build_engine.py` built a 694 MB engine (Python 3.12.9, GROOVE 1.0.10, YuE2 0.1.6, Torch 2.14.1) on Apple silicon.
+- With that engine, `live_resident_engine_generates_and_reuses_the_model` made two songs (192.9 s and 264.9 s; 49.8 s and 70.6 s of audio) and stopped a third mid-song.
+- The release app bundle is 678 MiB; an LZMA DMG of it is 200 MB. The installed app's engine answered the probe from an empty environment (`env -i`, no other Python), reporting MPS and the PyTorch backend.
+- Not yet covered: a different, clean Mac; code signing and notarization of the engine's binaries; Windows.
+
 ## Design and code review pass — 2026-10-18
 
 - A screen-by-screen review in a browser preview at 1440×900 and 960×700 (the minimum window) covered the first-run guide, models step, workspace in both modes, song details, menus, download, settings and AI connection dialogs, toasts and empty states, using temporary local fixtures that were not committed. The native window and the native-only model download states were not captured.

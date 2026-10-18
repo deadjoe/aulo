@@ -2,9 +2,15 @@
 
 Aulo calls the existing installed `yue2_groove.adapter`; it does not import Gradio handlers, start a web server, copy model implementations, or change the GROOVE checkout. `runtime/bridge.py` uses protocol version 3 over UTF-8 newline-delimited JSON. Library output, including native stdout, is redirected to stderr. A process either answers one `probe` and exits, or `serve`s: it stays running, keeps the loaded model between songs, and reads `generate`, `cancel` and `shutdown` commands. Every event of a song carries its `workId`. The process leaves with `os._exit` so a command reader blocked on stdin cannot crash interpreter shutdown.
 
+## The bundled engine
+
+The engine ships inside Aulo. `scripts/build_engine.py` (`npm run engine`) produces `src-tauri/engine/`: a relocatable CPython 3.12 from python-build-standalone with YuE2 0.1.6, YUE2 // GROOVE 1.0.10 (installed without its web UI) and PyTorch, using GROOVE's validated dependency overrides. The build removes packaging tools, test suites, headers and console scripts, and keeps bytecode only for modules the engine imports; it then checks that the interpreter starts in isolation and that the adapter imports. On Apple silicon the engine is about 690 MB on disk, and the DMG about 200 MB.
+
+`npm run bundle` builds the app with `src-tauri/tauri.bundle.conf.json`, which adds the engine as an app resource (`Aulo.app/Contents/Resources/engine`). A person who installs Aulo never installs Python or anything else; after the music models are prepared, Create works. `.github/workflows/package-macos.yml` builds the engine and the DMG on demand and on version tags.
+
 ## Discovery and readiness
 
-The Rust `engine_status` command discovers only Aulo's private runtime location. Debug builds may use an absolute `AULO_DEV_PYTHON` interpreter path supplied by the developer. Release builds ignore that override. No interpreter selector, command field, or dependency configuration is exposed to users. There is no PATH search or shell invocation.
+The Rust `engine_status` command uses only the engine inside the app bundle. Debug builds may instead use an absolute `AULO_DEV_PYTHON` interpreter, or an engine built into `src-tauri/engine`. Release builds ignore both. No interpreter selector, command field, or dependency configuration is exposed to users. There is no PATH search or shell invocation, and the engine never writes bytecode into the signed bundle.
 
 The probe checks the installed GROOVE 1.0.10 and YuE2 0.1.6 versions, imports the real adapter and PyTorch, and selects an engine with GROOVE's own rules:
 
@@ -14,7 +20,7 @@ The probe checks the installed GROOVE 1.0.10 and YuE2 0.1.6 versions, imports th
 
 A successful probe is cached for the session. Creation requires both a ready engine and verified models; `creation_status` reports which one is missing in plain language. The native host enforces a probe timeout, limits protocol output, checks the versioned reply, and reaps failed or timed-out children.
 
-The reserved interpreter locations are `runtime/python/bin/python3` on macOS and `runtime/python/python.exe` on Windows, under application data. GGUF binaries, when present, are read from `runtime/yue2cpp`, and converted GGUF files are written to `models/gguf`, both under application data.
+GGUF engine binaries, when bundled, sit beside the interpreter in `engine/yue2cpp`; converted GGUF files are written to `models/gguf` under application data.
 
 ## Generation
 
@@ -48,7 +54,9 @@ Works are folders under `<app-data>/library/<id>/` with an atomically replaced `
 
 ## Remaining integration gates
 
-- Packaged runtimes per platform, installed and smoke-tested on clean machines.
+- The Windows engine (CUDA PyTorch or the GGUF engine) and its installer size.
+- Signing and notarizing every binary in the bundled engine.
+- File-level delta updates, so an app update downloads only changed files and the engine layer is reused.
 - Windows device validation of the GGUF and PyTorch paths through Aulo.
 - Keep-awake on Windows (macOS uses `caffeinate`).
 - Cover and edit flows.

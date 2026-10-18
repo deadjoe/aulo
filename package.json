@@ -12,7 +12,9 @@
     "desktop": "tauri dev",
     "check": "npm run test && npm run build",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "engine": "python3 scripts/build_engine.py",
+    "bundle": "tauri build --config src-tauri/tauri.bundle.conf.json"
   },
   "dependencies": {
     "@fontsource-variable/bricolage-grotesque": "^5.3.0",

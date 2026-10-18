@@ -4,7 +4,7 @@ Your music, your space. A local music creation app for macOS and Windows, powere
 
 ## Status
 
-**0.2 creation workspace.** Aulo can create, play, and keep songs on a computer where the music engine is installed. The engine runtime is not yet packaged with the app, so on a clean computer the Create button stays disabled and says why.
+**0.2 creation workspace.** Aulo creates, plays, and keeps songs on the computer. The music engine ships inside the app (macOS on Apple silicon so far); after the setup guide prepares the music models, Create works.
 
 Implemented:
 
@@ -18,7 +18,7 @@ Implemented:
 - Engine selection is delegated to GROOVE's own rules (PyTorch on Apple Silicon and large NVIDIA cards, the GGUF engine on smaller NVIDIA cards).
 - An independent placeholder for connecting the user's existing AI agent.
 
-Not implemented: packaged inference runtime and installer, cover/edit integration, agent connection, signed installers, or automatic updates. Windows behavior compiles and is unit-tested but needs physical-device validation. See the [engine integration boundary](docs/ENGINE.md).
+Not implemented: the Windows engine package, cover/edit integration, agent connection, signed installers, or automatic updates. Windows behavior compiles and is unit-tested but needs physical-device validation. See the [engine integration boundary](docs/ENGINE.md).
 
 ## Development
 
@@ -58,13 +58,14 @@ The bundled manifest pins 17 files from the official YuE2 repositories, totaling
 
 Verified models are one of two creation requirements; the other is a working music engine with a supported accelerator. No inference runtime is bundled or installed by this version. Full multi-GB transfer and clean-machine runtime compatibility remain validation gates; automated tests use small local fixtures and an explicit pinned 959-byte live download.
 
-For development, point a debug build at an existing GROOVE 1.0.10 environment:
+Build the bundled engine once (needs uv and network access), then package the app with it:
 
 ```sh
-AULO_DEV_PYTHON=/absolute/path/to/yue2_groove/.venv/bin/python npm run desktop
+npm run engine
+npm run bundle -- --bundles app,dmg
 ```
 
-Release builds ignore this variable.
+Debug builds use `src-tauri/engine` when it exists, or an existing GROOVE 1.0.10 environment via `AULO_DEV_PYTHON=/absolute/path/to/python npm run desktop`. Release builds use only the engine inside the app.
 
 ## Product boundaries
 
