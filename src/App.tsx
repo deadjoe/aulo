@@ -46,6 +46,7 @@ import {
   renamePlaylist,
   renameWorkspace,
   revealSong,
+  shareSong,
   trashSongs,
   updateSong,
   type CreationStatus,
@@ -222,6 +223,31 @@ export default function App() {
     onDownload: (song) => setDownloading(song),
     onReveal: (song) =>
       void act(revealSong(song.id), "The song's folder could not be opened."),
+    onShare: (song, from) => {
+      const title = displayTitle(song.request);
+      const box = from.getBoundingClientRect();
+      // Preparing the copy is quick once, then instant; say so only if it lingers.
+      let told = false;
+      const slow = window.setTimeout(() => {
+        told = true;
+        notify(`Getting “${title}” ready to share…`);
+      }, 600);
+      return shareSong(song.id, title, {
+        x: box.left,
+        y: box.top,
+        width: box.width,
+        height: box.height,
+      }).then(
+        () => {
+          window.clearTimeout(slow);
+          if (told) dismiss();
+        },
+        (error: unknown) => {
+          window.clearTimeout(slow);
+          notify(problem(error, "Sharing could not be opened."));
+        },
+      );
+    },
     onPlaylist: (list) => setPicker({ kind: "playlist", songs: list }),
     onQueue: (list) => {
       player.enqueue(list);

@@ -3,6 +3,7 @@ mod collections;
 mod engine;
 mod models;
 mod runner;
+mod share;
 mod songs;
 use serde::Serialize;
 use sysinfo::{Disks, System};
@@ -150,7 +151,8 @@ pub fn run() {
             songs::song_waveform,
             songs::export_song,
             songs::reveal_song,
-            songs::reveal_library
+            songs::reveal_library,
+            share::share_song
         ])
         .build(tauri::generate_context!())
         .expect("Failed to start Aulo")

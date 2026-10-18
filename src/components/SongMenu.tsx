@@ -10,6 +10,7 @@ import {
   MoreVertical,
   Pencil,
   RotateCcw,
+  Share,
   SlidersHorizontal,
   Trash2,
 } from "lucide-react";
@@ -22,6 +23,8 @@ export interface SongActions {
   onRename: (song: Song) => void;
   onDownload: (song: Song) => void;
   onReveal: (song: Song) => void;
+  /** Opens the system share sheet, pointing from the element that asked. */
+  onShare: (song: Song, from: Element) => Promise<void>;
   onPlaylist: (songs: Song[]) => void;
   onQueue: (songs: Song[]) => void;
   onMove: (songs: Song[]) => void;
@@ -164,6 +167,10 @@ export default function SongMenu({
           {!many && finished(song) && (
             <>
               <hr />
+              {item("Share", <Share size={16} />, () => {
+                const from = ref.current;
+                if (from) void actions.onShare(song, from);
+              })}
               {item("Download", <Download size={16} />, () =>
                 actions.onDownload(song),
               )}

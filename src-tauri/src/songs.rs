@@ -765,7 +765,7 @@ pub fn update_song(
     Ok(())
 }
 
-fn finished_audio(
+pub(crate) fn finished_audio(
     app: &tauri::AppHandle,
     service: &SongService,
     id: &str,
@@ -797,7 +797,7 @@ pub enum AudioFormat {
 }
 
 impl AudioFormat {
-    fn extension(self) -> &'static str {
+    pub(crate) fn extension(self) -> &'static str {
         match self {
             Self::M4a => "m4a",
             Self::Mp3 => "mp3",
