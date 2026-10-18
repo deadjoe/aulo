@@ -1,3 +1,4 @@
+mod models;
 use serde::Serialize;
 use sysinfo::{Disks, System};
 use tauri::Manager;
@@ -110,7 +111,17 @@ fn collect_hardware(path: std::path::PathBuf) -> Hardware {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![inspect_hardware])
+        .plugin(tauri_plugin_opener::init())
+        .manage(models::ModelManager::default())
+        .invoke_handler(tauri::generate_handler![
+            inspect_hardware,
+            models::model_plan,
+            models::model_status,
+            models::download_models,
+            models::verify_models,
+            models::pause_models,
+            models::open_model_license
+        ])
         .run(tauri::generate_context!())
         .expect("Failed to start Aulo");
 }

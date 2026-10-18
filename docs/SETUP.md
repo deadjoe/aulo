@@ -1,36 +1,51 @@
 # First-run setup and delivery plan
 
-## Implemented preview flow
+## Implemented flow
 
-1. Welcome: explain the local workspace and clearly identify preview limitations.
+1. Welcome: explain the local workspace and current limits.
 2. Computer check: read processor, architecture, physical memory, destination-volume free space, and Windows NVIDIA device memory. Browser mode reports unknown values.
-3. Music essentials: explain forthcoming installation and allow an existing folder to be selected for the current session. No folder contents are trusted or imported.
-4. Optional simulation: show preparing, paused, resumed, and completed download presentation. Every state is explicitly a simulation, with no transfer or readiness flag.
-5. Explore: open the real local draft workspace. This does not mean the engine is ready.
+3. Music essentials: choose existing models or request a managed download. The wizard shows total size, required free storage, the storage location, and model-license information before downloading.
+4. Preparation: real transfer or read-only checksum verification, with progress, pause, retry, and restart recovery. No progress simulation remains.
+5. Explore: open the local draft workspace. The top bar keeps preparation status visible and reopens the essentials screen directly. Exploring never means the engine is ready.
 
-## Production setup state machine
+## Implemented model state machine
 
 ```text
-unconfigured -> inspecting -> eligible -> awaiting-download-consent
-  -> downloading -> verifying -> installing -> runtime-smoke-test -> ready
+not_started -> checking -> downloading -> verifying -> verified
+                  |            |             |
+                  +------------+-------------+--> paused / failed
+
+application restart:
+  saved verified location -> unverified -> explicit verification
+  partial managed download -> paused -> explicit resume
 ```
 
-Each operation needs a persisted checkpoint. Unsupported, unknown, insufficient-storage, paused, offline, verification-failed, installation-failed, and runtime-failed are distinct states with understandable next steps. Cancellation should preserve valid downloaded chunks and never promote partial files to complete models.
+`modelsVerified` describes checksums in the current session only. `generationReady` remains false and `runtimeState` remains `not_bundled` in this release. Verification does not load a model or test inference. Changes to files after verification still require a new check before a future runtime uses them.
 
-## Required before real downloads
+## Catalog and storage
 
-- Pin a compatible YUE2 // GROOVE release and platform runtime artifact.
-- Define a versioned manifest with immutable model revisions, file sizes, checksums, download sources, and licensing information.
-- Derive storage requirements from the complete install plan, including unpacking and rollback overhead. The current free-space display is informational; it is not a storage gate.
-- Choose a standard application data destination and offer an optional location picker.
-- Show actual download size and applicable model terms before transfer. Never claim the app's license covers model weights.
-- Detect existing files only in explicit user-selected or application-owned locations. Validate their contents and versions before reuse.
-- Support resumable transfers, verified staging, atomic promotion, retries, and a readable recovery path.
-- Run a real engine startup and minimal inference check before reporting ready.
-- Recheck readiness on subsequent launches. The preview's explored flag must never become a readiness flag.
+`manifests/music-models.json` pins immutable official revisions for YuE2-3B and YuE2-Vae. The catalog contains 17 data/notice files totaling 7,794,565,436 bytes. Every file has a size and SHA-256 digest. The maintenance script reads pinned metadata and small files; it never downloads model weights.
+
+Managed downloads use `<app-data>/models/yue2-source-v1/`. Existing selections must contain the `YuE2-3B/` and `YuE2-Vae/` subfolders. Imported files may use existing cache symlinks, but are never changed. Managed download paths reject symlinks. Selection is remembered in atomically replaced `models.json` only after successful validation.
+
+The initial space estimate subtracts existing complete/partial byte counts and includes a 512 MiB reserve. Existing files are then hashed, and space is rechecked per file before download. This estimate covers model preparation only, not a future packaged runtime, conversion scratch space, or generated audio. Unknown free space does not bypass the native storage check.
+
+HTTPS downloads use immutable URLs and 8 MiB range requests. Valid partial responses must match the requested range and total size. A full response restarts that file safely. Interrupted transfers retain partial files, retry at most three times per interruption, and offer manual retry. A 30-second request timeout bounds cancellation latency. Corrupt partials are discarded instead of promoted. An OS lock prevents competing application processes from writing the same store.
+
+The model license is shown as CC BY-NC 4.0 (non-commercial), with a fixed official license link opened by the native host. No license agreement is accepted automatically.
+
+## Remaining before generation
+
+- Package a pinned YUE2 // GROOVE runtime for each supported platform.
+- Verify the prepared models against those exact runtime artifacts.
+- Include runtime, conversion, and rollback overhead in the complete installation plan.
+- Implement a UI-independent local service with capabilities, jobs, events, cancellation, and durable works.
+- Run real engine startup and minimal inference checks before reporting ready.
+- Validate full-size transfers and clean-machine installations on macOS and Windows.
+- Add signed distribution, update verification, and rollback.
 
 ## Initial hardware targets
 
-Provisional targets follow the current YUE2 // GROOVE documentation: Apple Silicon with 32 GB or more memory, and x86-64 Windows with an NVIDIA GPU of at least 8 GB graphics memory. These do not guarantee performance or compatibility. macOS recommendations and Windows driver/runtime compatibility must be validated against the actual packaged engine. No AMD, Intel GPU, CPU-only, Intel Mac, or Windows ARM support is promised.
+Provisional targets follow the current YUE2 // GROOVE documentation: Apple Silicon with 32 GB or more memory, and x86-64 Windows with an NVIDIA GPU of at least 8 GB graphics memory. These do not guarantee performance or compatibility. No AMD, Intel GPU, CPU-only, Intel Mac, or Windows ARM support is promised.
 
-Memory rounding tolerates marketed capacities; allocation limits and available memory must be checked by the core before generation. Model and runtime choices belong to the installer/core, not to user-facing dropdowns.
+Models can be prepared independently of engine compatibility; this release never enables generation. The production runtime installer must gate unsupported hardware before an automatic full setup. Memory allocation limits and available memory must be checked by the core before generation. Runtime choices belong to the installer/core, not to user-facing dropdowns.

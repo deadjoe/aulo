@@ -3,11 +3,9 @@ import {
   ArrowLeft,
   ArrowRight,
   Check,
-  CheckCircle2,
   CircleHelp,
   Cpu,
   Download,
-  FolderOpen,
   HardDrive,
   Laptop,
   LoaderCircle,
@@ -15,24 +13,21 @@ import {
   ShieldCheck,
   Sparkles,
 } from "lucide-react";
-import {
-  assessHardware,
-  chooseModelFolder,
-  detectHardware,
-  type Hardware,
-} from "../lib/hardware";
+import { assessHardware, detectHardware, type Hardware } from "../lib/hardware";
 import { Brand, Mark } from "./Brand";
+import ModelsPanel from "./ModelsPanel";
 
-export default function SetupWizard({ onExplore }: { onExplore: () => void }) {
-  const [step, setStep] = useState(0);
+export default function SetupWizard({
+  onExplore,
+  initialStep = 0,
+}: {
+  onExplore: () => void;
+  initialStep?: number;
+}) {
+  const [step, setStep] = useState(initialStep);
   const [hardware, setHardware] = useState<Hardware | null>(null);
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState("");
-  const [folder, setFolder] = useState("");
-  const [demo, setDemo] = useState<"idle" | "running" | "paused" | "complete">(
-    "idle",
-  );
-  const [progress, setProgress] = useState(0);
   const assessment = assessHardware(hardware);
   async function check() {
     setChecking(true);
@@ -48,26 +43,6 @@ export default function SetupWizard({ onExplore }: { onExplore: () => void }) {
   useEffect(() => {
     if (step === 1) void check();
   }, [step]);
-  useEffect(() => {
-    if (demo !== "running") return;
-    const timer = window.setInterval(
-      () => setProgress((p) => Math.min(p + 4, 100)),
-      160,
-    );
-    return () => window.clearInterval(timer);
-  }, [demo]);
-  useEffect(() => {
-    if (progress === 100) setDemo("complete");
-  }, [progress]);
-  async function browse() {
-    setError("");
-    try {
-      const path = await chooseModelFolder();
-      if (path) setFolder(path);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not select a folder.");
-    }
-  }
   return (
     <div className="setup-shell">
       <header className="setup-header">
@@ -169,8 +144,8 @@ export default function SetupWizard({ onExplore }: { onExplore: () => void }) {
                   <CircleHelp size={17} />
                   <p>
                     This early preview includes computer checks and a working
-                    draft workspace. Music generation and model installation are
-                    coming next.
+                    draft workspace. You can now prepare verified music models;
+                    music generation is coming next.
                   </p>
                 </div>
               </>
@@ -257,98 +232,10 @@ export default function SetupWizard({ onExplore }: { onExplore: () => void }) {
                 <span className="eyebrow">YOUR MUSIC ESSENTIALS</span>
                 <h2>A home for the possibilities.</h2>
                 <p className="lead">
-                  Aulo will prepare the music engine and models for you. Your
-                  songs will have their own space.
+                  Download your music models, or reuse the ones you already
+                  have. We’ll check the files for you.
                 </p>
-                <div className="model-card">
-                  <div className="model-symbol">
-                    <Mark />
-                  </div>
-                  <section>
-                    <h3>Music essentials</h3>
-                    <p>Powered by YUE2 // GROOVE</p>
-                  </section>
-                  <span className="pill">Not installed</span>
-                </div>
-                <div className="model-details">
-                  <span>Engine + required models</span>
-                  <span>Size confirmed before download</span>
-                </div>
-                <button className="folder-row" onClick={() => void browse()}>
-                  <FolderOpen size={20} />
-                  <span>
-                    <strong>
-                      {folder
-                        ? "Existing model folder selected"
-                        : "Already have the models?"}
-                    </strong>
-                    <small>{folder || "Choose a folder to reuse later"}</small>
-                  </span>
-                  <ArrowRight size={17} />
-                </button>
-                {folder && (
-                  <p className="helper">
-                    Folder selected for this session. Model contents have not
-                    been validated or imported.
-                  </p>
-                )}
-                <div className="notice">
-                  <CircleHelp size={17} />
-                  <p>
-                    The installer is not connected yet. No files will be
-                    downloaded. You can preview the download experience below or
-                    explore the workspace.
-                  </p>
-                </div>
-                {demo === "idle" ? (
-                  <button
-                    className="text-button"
-                    onClick={() => {
-                      setProgress(0);
-                      setDemo("running");
-                    }}
-                  >
-                    Preview download experience <ArrowRight size={14} />
-                  </button>
-                ) : (
-                  <div className="download-demo" aria-live="polite">
-                    <div>
-                      <span>
-                        {demo === "complete" ? (
-                          <CheckCircle2 size={16} />
-                        ) : (
-                          <Download size={16} />
-                        )}{" "}
-                        {demo === "complete"
-                          ? "Download preview complete"
-                          : demo === "paused"
-                            ? "Preview paused"
-                            : "Preparing music essentials"}
-                      </span>
-                      <strong>{progress}%</strong>
-                    </div>
-                    <progress value={progress} max={100} />
-                    <footer>
-                      <small>SIMULATION · No files downloaded</small>
-                      <button
-                        className="text-button"
-                        onClick={() => {
-                          if (demo === "complete") {
-                            setProgress(0);
-                            setDemo("running");
-                          } else
-                            setDemo(demo === "running" ? "paused" : "running");
-                        }}
-                      >
-                        {demo === "complete"
-                          ? "Replay"
-                          : demo === "running"
-                            ? "Pause"
-                            : "Resume"}
-                      </button>
-                    </footer>
-                  </div>
-                )}
+                <ModelsPanel />
               </>
             )}
             {error && (

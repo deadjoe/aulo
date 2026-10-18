@@ -6,7 +6,7 @@
 React interface
   Setup guide / composer / draft library / settings
         |
-        +-- Tauri commands: hardware inspection
+        +-- Tauri commands: hardware inspection / model preparation
         +-- Native dialog: user-selected folder
         +-- Local draft storage (preview only)
 
@@ -24,6 +24,14 @@ Future integration boundary
 `src/lib/hardware.ts` separates native observations from provisional eligibility. Native inspection performs no downloads, model loading, or environment modification. On Windows, `nvidia-smi` has a five-second timeout; memory from multiple devices is never summed. Failure to detect a GPU means unknown rather than a CPU fallback.
 
 `src/lib/storage.ts` provides versioned, validated draft persistence. Production work storage must move to a durable application-owned library with migration, atomic writes, and backup/recovery policies before promising durable audio projects.
+
+## Model preparation
+
+`src-tauri/src/models.rs` owns the pinned catalog, downloads, checksums, and saved locations. UI components use typed commands in `src/lib/models.ts`; they never receive an arbitrary URL-download primitive. Network transfers run on a worker thread. An in-process guard and an OS file lock prevent concurrent preparation of shared storage.
+
+Managed files use `.part` staging and SHA-256 verification before promotion. The downloader accepts a valid matching HTTP range or safely restarts on a full response. Bounded requests and retries allow pause and offline recovery; pausing a pending request can take up to its 30-second timeout. Saved locations are atomically replaced. On restart, a saved success becomes unverified, not ready. User-selected files are only read and hashed.
+
+The model manifest targets the existing core version but does not prove packaged-runtime compatibility. Its hashes cover source checkpoints, tokenizer, configuration, and model notices. It does not install Python or execute model repository code. A separate runtime package and smoke test are required before enabling generation.
 
 ## Core integration
 

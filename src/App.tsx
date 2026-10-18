@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import SetupWizard from "./components/SetupWizard";
 import Dialog from "./components/Dialog";
+import PreparationBadge from "./components/PreparationBadge";
 import { Brand } from "./components/Brand";
 import { loadDrafts, saveDrafts, type Draft } from "./lib/storage";
 import { runtimeStatus } from "./lib/core";
@@ -37,6 +38,7 @@ function initialView() {
 }
 export default function App() {
   const [explored, setExplored] = useState(initialView);
+  const [setupStep, setSetupStep] = useState(0);
   const [page, setPage] = useState<Page>("create");
   const [modal, setModal] = useState<"settings" | "agent" | null>(null);
   const [drafts, setDrafts] = useState<Draft[]>(loadDrafts);
@@ -104,7 +106,8 @@ export default function App() {
     a.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
-  if (!explored) return <SetupWizard onExplore={explore} />;
+  if (!explored)
+    return <SetupWizard onExplore={explore} initialStep={setupStep} />;
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -164,12 +167,12 @@ export default function App() {
             <ChevronRight size={14} />
             My workspace
           </span>
-          <button
-            className="preview-badge"
-            onClick={() => setModal("settings")}
-          >
-            <span /> Preview · Engine not connected
-          </button>
+          <PreparationBadge
+            onOpen={() => {
+              setSetupStep(2);
+              setExplored(false);
+            }}
+          />
         </header>
         <div className="workspace-body">
           {page === "create" && (
@@ -522,14 +525,14 @@ export default function App() {
           <p>
             {modal === "agent"
               ? "Connect an AI agent you already use to help shape ideas and work with your music. This independent integration is planned for a later release."
-              : "Aulo is an early desktop preview. Drafts are stored locally in this app profile; they are not backed up automatically. No music engine or models have been installed."}
+              : "Aulo is an early desktop preview. Drafts are stored locally in this app profile; they are not backed up automatically. The music engine is not installed yet. Open the setup guide to prepare or verify music models."}
           </p>
           <div className="notice">
             <CircleHelp size={17} />
             <p>
               {modal === "agent"
                 ? "No agent is connected. This preview does not access agent configurations or send your lyrics to external services."
-                : "Hardware checks are real in the desktop app. Downloads are an explicitly labeled simulation. Generation and audio playback are not connected."}
+                : "Hardware checks and model preparation are available in the desktop app. Generation and audio playback are not connected."}
             </p>
           </div>
           {modal === "settings" && (
@@ -537,6 +540,7 @@ export default function App() {
               className="primary"
               onClick={() => {
                 setModal(null);
+                setSetupStep(2);
                 setExplored(false);
               }}
             >

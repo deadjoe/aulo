@@ -13,7 +13,7 @@ vi.mock("./lib/hardware", async (importOriginal) => ({
 beforeEach(() => localStorage.clear());
 afterEach(() => cleanup());
 describe("first-run setup", () => {
-  it("does not call browser hardware ready and offers a clearly labeled preview", async () => {
+  it("keeps browser hardware unknown and does not offer native model actions", async () => {
     const user = userEvent.setup();
     const explore = vi.fn();
     render(<SetupWizard onExplore={explore} />);
@@ -24,19 +24,13 @@ describe("first-run setup", () => {
       }),
     ).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Continue" }));
-    expect(screen.getByText("Not installed")).toBeVisible();
-    await user.click(
-      screen.getByRole("button", { name: /Already have the models/ }),
-    );
-    expect(await screen.findByText("/existing/models")).toBeVisible();
-    expect(screen.getByText(/not been validated or imported/)).toBeVisible();
-    await user.click(
-      screen.getByRole("button", { name: /Preview download experience/ }),
-    );
-    expect(screen.getByText(/SIMULATION/)).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Pause" }));
-    expect(screen.getByText("Preview paused")).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Resume" }));
+    expect(screen.getByText("Not prepared")).toBeVisible();
+    expect(
+      screen.getByText(/Open the desktop app to prepare music models/),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: /Download music models/ }),
+    ).not.toBeInTheDocument();
     await user.click(
       screen.getByRole("button", { name: "Explore the workspace" }),
     );

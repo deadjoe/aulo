@@ -1623,3 +1623,147 @@ button svg {
     transition: none !important;
   }
 }
+.models-panel .model-card {
+  margin-top: 24px;
+}
+.model-location {
+  display: flex;
+  gap: 8px;
+  color: #a8b79a;
+  font-size: 10px;
+  margin-bottom: 16px;
+  align-items: flex-start;
+}
+.model-location span {
+  overflow-wrap: anywhere;
+}
+.download-progress {
+  padding: 17px;
+  border: 1px solid #465738;
+  border-radius: 10px;
+  background: #242d1e;
+  margin-bottom: 18px;
+}
+.progress-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+}
+.progress-heading span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.progress-heading strong {
+  color: #b9cd9e;
+  font-weight: 500;
+}
+.download-progress progress {
+  width: 100%;
+  height: 5px;
+  border: 0;
+  margin: 17px 0 10px;
+  accent-color: #bdce9f;
+}
+.download-progress progress::-webkit-progress-bar {
+  background: #3b4730;
+  border-radius: 5px;
+}
+.download-progress progress::-webkit-progress-value {
+  background: #bdce9f;
+  border-radius: 5px;
+}
+.download-progress p {
+  font-size: 11px;
+  color: #b0bfa0;
+}
+.download-progress small {
+  display: block;
+  margin-top: 8px;
+  font-size: 9px;
+  color: #879c74;
+  overflow-wrap: anywhere;
+}
+.download-failed {
+  border-color: #796044;
+}
+.download-consent {
+  margin-top: 18px;
+  padding: 18px;
+  background: #20251c;
+  border: 1px solid #353e2b;
+  border-radius: 10px;
+}
+.download-consent > p {
+  font-size: 12px;
+  color: #c7d2ba;
+}
+.download-consent dl {
+  margin: 16px 0;
+  display: grid;
+  gap: 9px;
+  font-size: 10px;
+}
+.download-consent dl > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.download-consent dt {
+  color: #94a184;
+}
+.download-consent dd {
+  margin: 0;
+  text-align: right;
+}
+.download-consent > .primary {
+  width: 100%;
+  margin-top: 15px;
+}
+.storage-details {
+  color: #97a786;
+  font-size: 10px;
+}
+.storage-details summary {
+  cursor: pointer;
+}
+.storage-details p {
+  overflow-wrap: anywhere;
+  padding-top: 7px;
+}
+.license-consent {
+  display: flex;
+  gap: 10px;
+  margin-top: 17px;
+  font-size: 10px;
+  line-height: 1.7;
+  color: #b2bea4;
+  align-items: flex-start;
+}
+.license-consent input {
+  accent-color: #b7c79e;
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+.license-consent a {
+  color: #e7b69a;
+  text-underline-offset: 3px;
+}
+.runtime-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  font-size: 10px;
+  color: #97a38b;
+  margin: 20px 0 0;
+}
+.runtime-status svg {
+  margin-top: 2px;
+}
+.runtime-status strong {
+  display: block;
+  color: #c5cebc;
+  font-weight: 500;
+}
