@@ -18,6 +18,7 @@ import Composer from "./components/Composer";
 import LibraryPanel from "./components/LibraryPanel";
 import CollectionsView from "./components/CollectionsView";
 import PickerDialog from "./components/PickerDialog";
+import SaveToMenu from "./components/SaveToMenu";
 import SongDetail from "./components/SongDetail";
 import type { SongActions } from "./components/SongMenu";
 import DownloadDialog from "./components/DownloadDialog";
@@ -50,9 +51,7 @@ import {
 type Page = "create" | "library";
 type Modal = { kind: "settings" } | { kind: "agent" };
 type Picker =
-  | { kind: "playlist"; songs: Song[] }
-  | { kind: "workspace"; songs: Song[] }
-  | { kind: "save-to" };
+  { kind: "playlist"; songs: Song[] } | { kind: "workspace"; songs: Song[] };
 
 function remembered(key: string, fallback: string) {
   try {
@@ -482,8 +481,21 @@ export default function App() {
               creating={creating}
               onCreate={() => void create()}
               onOpenSetup={openSetup}
-              saveTo={saveToWorkspace.name}
-              onChooseSaveTo={() => setPicker({ kind: "save-to" })}
+              saveTo={
+                <SaveToMenu
+                  options={liveWorkspaces.map((w) => ({
+                    id: w.id,
+                    name: w.name,
+                    songs: songs.filter((s) => s.workspace === w.id).length,
+                  }))}
+                  selected={saveToWorkspace.id}
+                  onSelect={setSaveTo}
+                  onCreate={async (name) => {
+                    const created = await createWorkspace(name);
+                    setSaveTo(created.id);
+                  }}
+                />
+              }
               onClear={() => {
                 const previous = request;
                 setRequest(EMPTY_REQUEST);
@@ -528,9 +540,7 @@ export default function App() {
           title={
             picker.kind === "playlist"
               ? `Add ${titleOf(picker.songs)} to a playlist`
-              : picker.kind === "workspace"
-                ? `Move ${titleOf(picker.songs)} to a workspace`
-                : "Save new songs to"
+              : `Move ${titleOf(picker.songs)} to a workspace`
           }
           newLabel={
             picker.kind === "playlist" ? "New playlist" : "New workspace"
@@ -549,17 +559,13 @@ export default function App() {
                     songs.filter((s) => s.workspace === w.id).length,
                     "song",
                   ),
-                  current:
-                    picker.kind === "save-to"
-                      ? w.id === saveToWorkspace.id
-                      : picker.songs.every((s) => s.workspace === w.id),
+                  current: picker.songs.every((s) => s.workspace === w.id),
                 }))
           }
           onClose={() => setPicker(null)}
           onPick={(id) => {
             const current = picker;
             setPicker(null);
-            if (current.kind === "save-to") return setSaveTo(id);
             const ids = current.songs.map((s) => s.id);
             const name =
               current.kind === "playlist"
@@ -589,14 +595,11 @@ export default function App() {
               notify(`Added ${titleOf(current.songs)} to ${name.trim()}.`);
             } else {
               const created = await createWorkspace(name);
-              if (current.kind === "save-to") setSaveTo(created.id);
-              else {
-                await moveSongs(
-                  current.songs.map((s) => s.id),
-                  created.id,
-                );
-                notify(`Moved ${titleOf(current.songs)} to ${created.name}.`);
-              }
+              await moveSongs(
+                current.songs.map((s) => s.id),
+                created.id,
+              );
+              notify(`Moved ${titleOf(current.songs)} to ${created.name}.`);
             }
             setPicker(null);
           }}
