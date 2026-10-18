@@ -3,19 +3,27 @@ import {
   ArrowLeft,
   ArrowRight,
   Check,
-  CircleHelp,
   Cpu,
-  Download,
   HardDrive,
-  Laptop,
   LoaderCircle,
-  Music2,
+  MemoryStick,
+  MonitorSmartphone,
   ShieldCheck,
-  Sparkles,
 } from "lucide-react";
 import { assessHardware, detectHardware, type Hardware } from "../lib/hardware";
-import { Brand, Mark } from "./Brand";
+import { getModelStatus, desktopModelsAvailable } from "../lib/models";
+import { Brand } from "./Brand";
+import CoverArt from "./CoverArt";
 import ModelsPanel from "./ModelsPanel";
+
+const STEPS = ["Welcome", "Your computer", "Music models"];
+
+function graphicsLabel(hardware: Hardware | null) {
+  if (hardware?.gpu) return hardware.gpu;
+  if (hardware?.platform === "macos" && hardware.arch === "aarch64")
+    return "Built into your Mac";
+  return hardware ? "Not found" : null;
+}
 
 export default function SetupWizard({
   onExplore,
@@ -28,14 +36,16 @@ export default function SetupWizard({
   const [hardware, setHardware] = useState<Hardware | null>(null);
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState("");
+  const [modelsReady, setModelsReady] = useState(false);
   const assessment = assessHardware(hardware);
+
   async function check() {
     setChecking(true);
     setError("");
     try {
       setHardware(await detectHardware());
     } catch {
-      setError("We could not finish the computer check. Please try again.");
+      setError("The check didn’t finish. Try again.");
     } finally {
       setChecking(false);
     }
@@ -43,240 +53,208 @@ export default function SetupWizard({
   useEffect(() => {
     if (step === 1) void check();
   }, [step]);
+  // The last step's main action depends on whether the models are ready.
+  useEffect(() => {
+    if (step !== 2 || !desktopModelsAvailable()) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = () =>
+      getModelStatus()
+        .then((s) => {
+          if (!stopped) setModelsReady(s.modelsVerified);
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          if (!stopped) timer = setTimeout(poll, 2000);
+        });
+    void poll();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [step]);
+
+  const facts: [React.ReactNode, string, string | null | undefined][] = [
+    [<Cpu key="c" size={18} />, "Chip", hardware?.chip],
+    [
+      <MemoryStick key="m" size={18} />,
+      "Memory",
+      hardware ? `${Math.round(hardware.memoryGiB)} GB` : null,
+    ],
+    [
+      <HardDrive key="d" size={18} />,
+      "Free space",
+      hardware?.freeDiskGiB != null
+        ? `${Math.floor(hardware.freeDiskGiB)} GB`
+        : null,
+    ],
+    [
+      <MonitorSmartphone key="g" size={18} />,
+      "Graphics",
+      graphicsLabel(hardware),
+    ],
+  ];
+
   return (
-    <div className="setup-shell">
-      <header className="setup-header">
+    <div className="setup">
+      <aside className="setup-hero" aria-hidden="true">
         <Brand />
-        <span className="quiet-badge">
-          DESIGN PREVIEW <span>0.1</span>
-        </span>
-      </header>
-      <div className="setup-layout">
-        <aside className="setup-story">
-          <div className="story-art">
-            <div className="orbit orbit-one" />
-            <div className="orbit orbit-two" />
-            <div className="orbit orbit-three" />
-            <Mark large />
-            <span className="art-caption">
-              A LITTLE SPACE FOR SOMETHING NEW
-            </span>
-          </div>
-          <div className="story-copy">
-            <span className="eyebrow">MADE HERE. MADE YOURS.</span>
-            <h1>
-              Your next song
-              <br />
-              starts at home.
-            </h1>
-            <p>
-              A little inspiration. Your own computer.
-              <br />A whole world of music.
-            </p>
-          </div>
-          <div className="story-footer">
-            <ShieldCheck size={16} /> A workspace on your computer
-          </div>
-        </aside>
-        <main className="setup-main">
-          <ol className="stepper" aria-label="Setup progress">
-            {["Welcome", "Your computer", "Music essentials"].map(
-              (label, i) => (
-                <li
-                  key={label}
-                  className={i === step ? "current" : i < step ? "done" : ""}
-                  aria-current={i === step ? "step" : undefined}
-                >
-                  <span>{i < step ? <Check size={13} /> : `0${i + 1}`}</span>
-                  {label}
-                </li>
-              ),
-            )}
-          </ol>
-          <div className="setup-content" key={step}>
-            {step === 0 && (
-              <>
-                <span className="section-icon">
-                  <Sparkles size={23} />
-                </span>
-                <span className="eyebrow">WELCOME TO AULO</span>
-                <h2>Make room for your music.</h2>
-                <p className="lead">
-                  Let’s get your own little music studio ready.
-                  <br />
-                  We’ll take care of the complicated parts.
-                </p>
-                <div className="welcome-features">
-                  <div>
-                    <span>
-                      <Laptop />
-                    </span>
-                    <section>
-                      <h3>A setup that fits your computer</h3>
-                      <p>
-                        We check your hardware and find the right starting
-                        point.
-                      </p>
-                    </section>
-                  </div>
-                  <div>
-                    <span>
-                      <Download />
-                    </span>
-                    <section>
-                      <h3>The essentials, all in one place</h3>
-                      <p>A guided home for your music engine and models.</p>
-                    </section>
-                  </div>
-                  <div>
-                    <span>
-                      <Music2 />
-                    </span>
-                    <section>
-                      <h3>More creating. Less configuring.</h3>
-                      <p>
-                        One workspace for your ideas, songs, and new versions.
-                      </p>
-                    </section>
-                  </div>
-                </div>
-                <div className="notice">
-                  <CircleHelp size={17} />
-                  <p>
-                    Aulo checks your computer and prepares the music models
-                    once. After that, everything runs on this computer.
-                  </p>
-                </div>
-              </>
-            )}
-            {step === 1 && (
-              <>
-                <span className="section-icon">
-                  <Cpu size={23} />
-                </span>
-                <span className="eyebrow">A GOOD START</span>
-                <h2>
-                  {checking
-                    ? "Getting to know your computer."
-                    : assessment.title}
-                </h2>
-                <p className="lead">
-                  {checking
-                    ? "Checking the essentials. No settings to figure out."
-                    : assessment.description}
-                </p>
-                {checking ? (
-                  <div className="checking">
-                    <LoaderCircle className="spin" /> Checking your computer…
-                  </div>
-                ) : (
-                  <div className="hardware-grid">
-                    <div>
-                      <Cpu />
-                      <span>Processor</span>
-                      <strong>
-                        {hardware?.chip || "Desktop check needed"}
-                      </strong>
-                    </div>
-                    <div>
-                      <Laptop />
-                      <span>Memory</span>
-                      <strong>
-                        {hardware
-                          ? `${Math.round(hardware.memoryGiB)} GB`
-                          : "Not available in browser"}
-                      </strong>
-                    </div>
-                    <div>
-                      <HardDrive />
-                      <span>Available storage</span>
-                      <strong>
-                        {hardware?.freeDiskGiB != null
-                          ? `${Math.floor(hardware.freeDiskGiB)} GB`
-                          : "Not verified"}
-                      </strong>
-                    </div>
-                    <div>
-                      <Sparkles />
-                      <span>Graphics</span>
-                      <strong>
-                        {hardware?.gpu ||
-                          (hardware?.platform === "macos" &&
-                          hardware.arch === "aarch64"
-                            ? "Apple integrated graphics"
-                            : "Not verified")}
-                      </strong>
-                    </div>
-                  </div>
-                )}
-                <div className="notice">
-                  <ShieldCheck size={17} />
-                  <p>
-                    These checks stay on your computer. Hardware eligibility
-                    does not mean the music engine is installed or ready.
-                  </p>
-                </div>
-                {!checking && (
-                  <button className="text-button" onClick={() => void check()}>
-                    Check again
-                  </button>
-                )}
-              </>
-            )}
-            {step === 2 && (
-              <>
-                <span className="section-icon">
-                  <Download size={23} />
-                </span>
-                <span className="eyebrow">YOUR MUSIC ESSENTIALS</span>
-                <h2>A home for the possibilities.</h2>
-                <p className="lead">
-                  Download your music models, or reuse the ones you already
-                  have. We’ll check the files for you.
-                </p>
-                <ModelsPanel />
-              </>
-            )}
-            {error && (
-              <p className="error" role="alert">
-                {error}
+        <div className="hero-covers">
+          <CoverArt
+            id="aulo-hero-one"
+            style="synthwave night drive"
+            size="lg"
+          />
+          <CoverArt id="aulo-hero-two" style="warm acoustic folk" size="lg" />
+          <CoverArt id="aulo-hero-three" style="dreamy lo-fi" size="lg" />
+        </div>
+        <p className="hero-line">
+          Your songs,
+          <br />
+          made on your computer
+        </p>
+      </aside>
+      <main className="setup-panel">
+        <div className="setup-brand">
+          <Brand />
+        </div>
+        <ol className="steps" aria-label="Setup progress">
+          {STEPS.map((label, i) => (
+            <li
+              key={label}
+              className={i === step ? "current" : i < step ? "done" : ""}
+              aria-current={i === step ? "step" : undefined}
+            >
+              <span className="step-dot">
+                {i < step && <Check size={11} strokeWidth={3} />}
+              </span>
+              {label}
+            </li>
+          ))}
+        </ol>
+        <div className="setup-content" key={step}>
+          {step === 0 && (
+            <>
+              <h1>Make music on your own computer</h1>
+              <p className="lead">
+                Describe a sound, add your words, and Aulo writes and sings the
+                song. Your songs never leave this computer.
               </p>
-            )}
-          </div>
-          <footer className="setup-actions">
-            <div>
-              {step > 0 && (
-                <button
-                  className="text-button"
-                  onClick={() => {
-                    setError("");
-                    setStep(step - 1);
-                  }}
-                >
-                  <ArrowLeft size={16} /> Back
+              <ul className="welcome-list">
+                <li>
+                  <span>
+                    <Cpu size={18} />
+                  </span>
+                  <div>
+                    <strong>A quick look at your computer</strong>
+                    <p>Aulo checks that it can make music here.</p>
+                  </div>
+                </li>
+                <li>
+                  <span>
+                    <HardDrive size={18} />
+                  </span>
+                  <div>
+                    <strong>The music models, once</strong>
+                    <p>About 7.8 GB, downloaded a single time.</p>
+                  </div>
+                </li>
+                <li>
+                  <span>
+                    <ShieldCheck size={18} />
+                  </span>
+                  <div>
+                    <strong>Then just create</strong>
+                    <p>No account, no settings, nothing to configure.</p>
+                  </div>
+                </li>
+              </ul>
+            </>
+          )}
+          {step === 1 && (
+            <>
+              <h1>
+                {checking ? "Looking at your computer…" : assessment.title}
+              </h1>
+              <p className="lead">
+                {checking
+                  ? "This only takes a moment."
+                  : assessment.description}
+              </p>
+              <div className="hardware-grid">
+                {facts.map(([icon, label, value]) => (
+                  <div key={label}>
+                    {icon}
+                    <span>{label}</span>
+                    <strong>
+                      {checking ? (
+                        <LoaderCircle size={15} className="spin" />
+                      ) : (
+                        value || "Checked in the app"
+                      )}
+                    </strong>
+                  </div>
+                ))}
+              </div>
+              {!checking && (
+                <button className="text-button" onClick={() => void check()}>
+                  Check again
                 </button>
               )}
-            </div>
+            </>
+          )}
+          {step === 2 && (
+            <>
+              <h1>{modelsReady ? "You’re all set" : "Get the music models"}</h1>
+              <p className="lead">
+                {modelsReady
+                  ? "The music models are ready. Time to make your first song."
+                  : "Aulo needs its music models once to make songs. They stay on this computer."}
+              </p>
+              <ModelsPanel />
+            </>
+          )}
+          {error && (
+            <p className="error" role="alert">
+              {error}
+            </p>
+          )}
+        </div>
+        <footer className="setup-actions">
+          {step > 0 ? (
+            <button
+              className="text-button"
+              onClick={() => {
+                setError("");
+                setStep(step - 1);
+              }}
+            >
+              <ArrowLeft size={16} /> Back
+            </button>
+          ) : (
+            <span />
+          )}
+          {step < 2 ? (
             <button
               className="primary"
               disabled={checking}
-              onClick={() => (step < 2 ? setStep(step + 1) : onExplore())}
+              onClick={() => setStep(step + 1)}
             >
-              {step === 0
-                ? "Let’s get started"
-                : step === 1
-                  ? "Continue"
-                  : "Explore the workspace"}
+              {step === 0 ? "Get started" : "Continue"}
               <ArrowRight size={17} />
             </button>
-          </footer>
-          <p className="setup-footnote">
-            {step === 2
-              ? "Exploring does not mark your music engine as ready."
-              : "Your ideas deserve a place of their own."}
-          </p>
-        </main>
-      </div>
+          ) : modelsReady ? (
+            <button className="primary" onClick={onExplore}>
+              Start creating
+              <ArrowRight size={17} />
+            </button>
+          ) : (
+            <button className="secondary" onClick={onExplore}>
+              Look around first
+            </button>
+          )}
+        </footer>
+      </main>
     </div>
   );
 }

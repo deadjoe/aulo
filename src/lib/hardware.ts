@@ -22,25 +22,24 @@ export function assessHardware(h: Hardware | null): Assessment {
   if (!h)
     return {
       status: "unknown",
-      title: "A quick check in the desktop app",
+      title: "Aulo checks this in the app",
       description:
-        "Your browser cannot reliably inspect your graphics card or available memory. The desktop app checks these automatically.",
+        "Open the Aulo app to see whether this computer can make music.",
       profile: null,
     };
   if (h.platform === "macos" && h.arch === "aarch64") {
     if (h.memoryGiB < 31)
       return {
         status: "limited",
-        title: "This Mac needs more memory",
+        title: "This Mac has less memory than Aulo needs",
         description:
-          "The current music engine targets Apple Silicon Macs with 32 GB of memory or more. You can still explore the workspace.",
+          "Aulo needs a Mac with Apple silicon and at least 32 GB of memory to make music. You can still look around.",
         profile: null,
       };
     return {
       status: "candidate",
-      title: "A promising home for your music",
-      description:
-        "Your Apple Silicon Mac meets the initial memory recommendation. A runtime check is still required before creating music.",
+      title: "Your Mac looks ready for Aulo",
+      description: "It has the chip and memory Aulo needs to make music.",
       profile: "apple-silicon",
     };
   }
@@ -48,32 +47,32 @@ export function assessHardware(h: Hardware | null): Assessment {
     if (!h.gpu || h.gpuMemoryGiB === null)
       return {
         status: "unknown",
-        title: "We could not verify your graphics card",
+        title: "Aulo couldn’t find an NVIDIA graphics card",
         description:
-          "Aulo currently targets NVIDIA graphics on Windows. Detection may require an installed NVIDIA driver. You can retry or explore the workspace.",
+          "On Windows, Aulo makes music with an NVIDIA graphics card. If this PC has one, update its driver and check again.",
         profile: null,
       };
     if (h.gpuMemoryGiB < 7.5)
       return {
         status: "limited",
-        title: "More graphics memory is needed",
+        title: "This graphics card has too little memory",
         description:
-          "The initial Windows target needs an NVIDIA GPU with at least 8 GB of graphics memory. Support still needs validation on your device.",
+          "Aulo needs an NVIDIA graphics card with at least 8 GB of memory. You can still look around.",
         profile: null,
       };
     return {
       status: "candidate",
-      title: "Your graphics card looks suitable",
+      title: "Your PC looks ready for Aulo",
       description:
-        "We found an NVIDIA GPU with enough memory for the initial Windows target. Windows runtime validation is still pending.",
+        "It has an NVIDIA graphics card with enough memory to make music.",
       profile: "windows-nvidia",
     };
   }
   return {
     status: "unsupported",
-    title: "This computer is not supported yet",
+    title: "Aulo can’t make music on this computer yet",
     description:
-      "The first release targets Apple Silicon Macs and Windows PCs with NVIDIA graphics. The workspace preview is still available.",
+      "Aulo works on Macs with Apple silicon and on Windows PCs with an NVIDIA graphics card. You can still look around.",
     profile: null,
   };
 }
@@ -90,6 +89,6 @@ export async function chooseModelFolder(): Promise<string | null> {
   return open({
     directory: true,
     multiple: false,
-    title: "Choose a model folder",
+    title: "Choose the folder with your music models",
   });
 }

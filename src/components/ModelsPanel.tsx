@@ -1,4 +1,4 @@
-import EngineStatus from "./EngineStatus";
+import { inspectEngine } from "../lib/core";
 import { useEffect, useState } from "react";
 import {
   ArrowRight,
@@ -94,15 +94,20 @@ export default function ModelsPanel() {
       status?.phase === "unverified") &&
     status.operation === "verify" &&
     !!status.modelRoot;
+  const downloading = status?.operation === "download";
   const label = verified
-    ? "Verified"
+    ? "Ready"
     : status?.phase === "unverified"
-      ? "Check needed"
+      ? "Needs a check"
       : active
-        ? "Preparing"
+        ? downloading
+          ? "Downloading"
+          : "Checking"
         : status?.phase === "paused"
           ? "Paused"
-          : "Not prepared";
+          : status?.phase === "failed"
+            ? "Needs attention"
+            : "Not downloaded";
   return (
     <div className="models-panel">
       <div className="model-card">
@@ -111,62 +116,44 @@ export default function ModelsPanel() {
         </div>
         <section>
           <h3>Music models</h3>
-          <p>For YUE2 // GROOVE</p>
+          <p>
+            {plan
+              ? `${formatBytes(plan.totalBytes)} · needed once`
+              : "About 7.8 GB · needed once"}
+          </p>
         </section>
-        <span className="pill">{label}</span>
-      </div>
-      <div className="model-details">
-        <span>
-          {plan
-            ? `${formatBytes(plan.totalBytes)} · ${plan.fileCount} files`
-            : "Verified, versioned model files"}
-        </span>
-        <span>{verified ? "Checksums match" : "Checked before use"}</span>
+        <span className={`pill${verified ? " pill-ready" : ""}`}>{label}</span>
       </div>
       {!desktop ? (
         <div className="notice">
           <CircleHelp size={17} />
-          <p>
-            Open the desktop app to prepare music models. This browser preview
-            does not inspect local folders or download model files.
-          </p>
+          <p>Open the Aulo app to download the music models.</p>
         </div>
       ) : (
         <>
-          {status?.modelRoot && (
-            <div className="model-location">
-              <FolderOpen size={15} />
-              <span>{status.modelRoot}</span>
-            </div>
-          )}
-          {active ||
-          status?.phase === "paused" ||
-          status?.phase === "failed" ||
-          verified ? (
+          {(active ||
+            status?.phase === "paused" ||
+            status?.phase === "failed") && (
             <div
               className={`download-progress ${status?.phase === "failed" ? "download-failed" : ""}`}
               aria-live="polite"
             >
               <div className="progress-heading">
                 <span>
-                  {verified ? (
-                    <CheckCircle2 size={17} />
-                  ) : active ? (
+                  {active ? (
                     <LoaderCircle size={17} className="spin" />
                   ) : (
                     <Download size={17} />
                   )}
-                  {verified
-                    ? "Models checked and ready to reuse"
-                    : status?.phase === "verifying"
-                      ? "Checking model integrity"
-                      : status?.phase === "retrying"
-                        ? "Reconnecting…"
-                        : status?.phase === "paused"
-                          ? "Preparation paused"
-                          : status?.phase === "failed"
-                            ? "Let’s get this back on track"
-                            : "Preparing your music models"}
+                  {status?.phase === "verifying" || status?.phase === "checking"
+                    ? "Checking the music models"
+                    : status?.phase === "retrying"
+                      ? "Reconnecting…"
+                      : status?.phase === "paused"
+                        ? "Paused"
+                        : status?.phase === "failed"
+                          ? "Something went wrong"
+                          : "Downloading the music models"}
                 </span>
                 <strong>{percent}%</strong>
               </div>
@@ -176,7 +163,6 @@ export default function ModelsPanel() {
                 value={percent}
               />
               <p>{status?.message}</p>
-              {status?.currentFile && <small>{status.currentFile}</small>}
               {active && (
                 <button
                   className="text-button"
@@ -189,67 +175,41 @@ export default function ModelsPanel() {
                   }
                 >
                   <Pause size={14} />
-                  {pauseRequested ? "Pausing…" : "Pause preparation"}
+                  {pauseRequested ? "Pausing…" : "Pause"}
                 </button>
               )}
             </div>
-          ) : null}
-          {!active && (
-            <button
-              className="folder-row"
-              disabled={pending}
-              onClick={() => void choose()}
-            >
-              <FolderOpen size={20} />
-              <span>
-                <strong>
-                  {verified
-                    ? "Use a different model folder"
-                    : "Already have the models?"}
-                </strong>
-                <small>
-                  Choose your models folder. We’ll verify it without changing
-                  files.
-                </small>
-              </span>
-              <ArrowRight size={17} />
-            </button>
+          )}
+          {verified && (
+            <div className="models-ready" role="status">
+              <CheckCircle2 size={18} />
+              <p>{status?.message || "Music models are ready."}</p>
+            </div>
           )}
           {retryVerify && (
             <button
-              className="secondary"
+              className="primary"
               disabled={pending}
               onClick={() =>
                 void action(() => verifyModels(status!.modelRoot!))
               }
             >
-              <ShieldCheck size={15} />
-              Verify saved folder
+              <ShieldCheck size={16} />
+              Check the music models
             </button>
           )}
-          {!active && !verified && plan && (
+          {!active && !verified && plan && !retryVerify && (
             <div className="download-consent">
-              <p>
-                {status?.phase === "paused" && status.operation === "download"
-                  ? "Resume your download. Existing files will be checked first."
-                  : "Or let Aulo download its own copy."}
-              </p>
               <dl>
                 <div>
-                  <dt>Download</dt>
-                  <dd>{formatBytes(plan.totalBytes)} total</dd>
+                  <dt>Download size</dt>
+                  <dd>{formatBytes(plan.totalBytes)}</dd>
                 </div>
                 <div>
                   <dt>Free space needed</dt>
-                  <dd>
-                    {formatBytes(plan.requiredFreeBytes)} including reserve
-                  </dd>
+                  <dd>{formatBytes(plan.requiredFreeBytes)}</dd>
                 </div>
               </dl>
-              <details className="storage-details">
-                <summary>Storage location</summary>
-                <p>{plan.destination}</p>
-              </details>
               <label className="license-consent">
                 <input
                   type="checkbox"
@@ -257,7 +217,7 @@ export default function ModelsPanel() {
                   onChange={(e) => setAccepted(e.target.checked)}
                 />
                 <span>
-                  I have reviewed the{" "}
+                  I agree to the music models’{" "}
                   <a
                     href={plan.licenseUrl}
                     onClick={(event) => {
@@ -265,16 +225,15 @@ export default function ModelsPanel() {
                       void openModelLicense().catch((e) => setError(String(e)));
                     }}
                   >
-                    {plan.license} model license
-                  </a>{" "}
-                  (non-commercial) and want to download these files from Hugging
-                  Face.
+                    {plan.license} license
+                  </a>
+                  , which allows non-commercial use only.
                 </span>
               </label>
               {shortOfSpace && (
                 <p className="error" role="alert">
-                  There isn’t enough free space. Free up storage, or choose
-                  existing models.
+                  There isn’t enough free space. Free up some space, or choose a
+                  folder that already has the music models.
                 </p>
               )}
               <button
@@ -287,23 +246,44 @@ export default function ModelsPanel() {
                   ? "Resume download"
                   : status?.phase === "failed" &&
                       status.operation === "download"
-                    ? "Retry download"
+                    ? "Try again"
                     : "Download music models"}
               </button>
+              <details className="storage-details">
+                <summary>Where they’re saved</summary>
+                <p>{plan.destination}</p>
+              </details>
             </div>
+          )}
+          {!active && (
+            <button
+              className="folder-row"
+              disabled={pending}
+              onClick={() => void choose()}
+            >
+              <FolderOpen size={19} />
+              <span>
+                <strong>
+                  {verified
+                    ? "Use a different folder"
+                    : "Already have the music models?"}
+                </strong>
+                <small>
+                  Choose their folder. Aulo checks them and changes nothing.
+                </small>
+              </span>
+              <ArrowRight size={17} />
+            </button>
           )}
           {!status && !error && (
             <p className="helper">
-              <LoaderCircle size={13} className="spin" /> Checking model
-              storage…
+              <LoaderCircle size={13} className="spin" /> Looking for the music
+              models…
             </p>
           )}
+          <EngineNote />
         </>
       )}
-      <div className="runtime-status">
-        <CircleHelp size={16} />
-        <EngineStatus />
-      </div>
       {error && (
         <p className="error" role="alert">
           {error}
@@ -311,4 +291,27 @@ export default function ModelsPanel() {
       )}
     </div>
   );
+}
+
+/** Only speaks up when the music engine itself needs attention. */
+function EngineNote() {
+  const [message, setMessage] = useState<string | null>(null);
+  useEffect(() => {
+    let active = true;
+    inspectEngine().then(
+      (status) => {
+        if (active && !status.generationReady) setMessage(status.message);
+      },
+      () => undefined,
+    );
+    return () => {
+      active = false;
+    };
+  }, []);
+  return message ? (
+    <div className="notice">
+      <CircleHelp size={17} />
+      <p>{message}</p>
+    </div>
+  ) : null;
 }

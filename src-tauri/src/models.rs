@@ -101,7 +101,7 @@ impl SetupStatus {
             completed_bytes: 0,
             total_bytes: total,
             current_file: None,
-            message: "Choose existing models or download the music models.".into(),
+            message: "Download the music models, or choose a folder that already has them.".into(),
             model_root: None,
             models_verified: false,
             runtime_state: "not_bundled".into(),
@@ -136,12 +136,12 @@ impl ModelManager {
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .is_err()
         {
-            return Err("Model preparation is already running.".into());
+            return Err("The music models are already being prepared.".into());
         }
         self.0.pause.store(false, Ordering::SeqCst);
         let mut status = SetupStatus::initial(total);
         status.phase = "checking".into();
-        status.message = "Checking your model files…".into();
+        status.message = "Checking the music models…".into();
         status.model_root = Some(root.to_string_lossy().into_owned());
         *self.0.status.lock().unwrap() = Some(status);
         Ok(())
@@ -228,7 +228,7 @@ fn write_selection(
     Ok(())
 }
 fn io_error(e: std::io::Error) -> String {
-    format!("Could not access model storage: {e}")
+    format!("Aulo couldn’t save the music models here ({e}).")
 }
 fn managed_root(base: &Path, m: &Manifest) -> PathBuf {
     base.join("models").join(&m.id)
@@ -239,7 +239,7 @@ fn base_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 fn ensure_not_symlink(path: &Path) -> Result<(), String> {
     for ancestor in path.ancestors() {
         if fs::symlink_metadata(ancestor).is_ok_and(|m| m.file_type().is_symlink()) {
-            return Err("Model download storage must not contain symbolic links. Choose existing models instead.".into());
+            return Err("Aulo can’t download into this folder. Choose a folder that already has the music models instead.".into());
         }
     }
     Ok(())
@@ -257,7 +257,7 @@ fn lock_storage(base: &Path) -> Result<File, String> {
         .open(base.join("model-preparation.lock"))
         .map_err(io_error)?;
     fs2::FileExt::try_lock_exclusive(&file).map_err(|_| {
-        "Another Aulo window is preparing models. Wait for it to finish.".to_string()
+        "Another Aulo window is preparing the music models. Wait for it to finish.".to_string()
     })?;
     Ok(file)
 }
@@ -354,16 +354,14 @@ fn restore_status(base: &Path, m: &Manifest) -> SetupStatus {
                 s.phase = "unverified".into();
                 s.operation = Some("verify".into());
                 s.model_root = Some(saved.model_root.to_string_lossy().into_owned());
-                s.message =
-                    "Your model location is saved. Verify the files before using them.".into();
+                s.message = "Aulo needs to check the music models again before using them.".into();
             }
         }
     }
     if s.model_root.is_none() && managed_root(base, m).exists() {
         s.phase = "paused".into();
         s.operation = Some("download".into());
-        s.message =
-            "An earlier download can be resumed. Completed files will be checked again.".into();
+        s.message = "Your download was paused. Pick up where you left off.".into();
         s.model_root = Some(managed_root(base, m).to_string_lossy().into_owned());
     }
     s
@@ -377,7 +375,7 @@ pub fn open_model_license(app: tauri::AppHandle) -> Result<(), String> {
             "https://creativecommons.org/licenses/by-nc/4.0/",
             None::<&str>,
         )
-        .map_err(|_| "Could not open the model license in your browser.".to_string())
+        .map_err(|_| "The license page couldn’t be opened.".to_string())
 }
 
 #[tauri::command]
@@ -396,7 +394,7 @@ fn finish(manager: &ModelManager, result: Result<(), String>) {
             }
             .into();
             s.message = if manager.cancelled() {
-                "Preparation paused. Your downloaded files are kept.".into()
+                "Paused. What’s downloaded so far is kept.".into()
             } else {
                 error
             };
@@ -410,7 +408,7 @@ pub fn download_models(
     terms_accepted: bool,
 ) -> Result<(), String> {
     if !terms_accepted {
-        return Err("Please review the model license and confirm the download first.".into());
+        return Err("Agree to the music models’ license first.".into());
     }
     let m = manifest()?;
     let base = base_path(&app)?;
@@ -453,9 +451,9 @@ pub fn verify_models(
 ) -> Result<(), String> {
     let root = PathBuf::from(folder)
         .canonicalize()
-        .map_err(|_| "This model folder is unavailable. Please choose it again.".to_string())?;
+        .map_err(|_| "That folder can’t be opened. Choose it again.".to_string())?;
     if !root.is_dir() {
-        return Err("Please choose a folder containing YuE2-3B and YuE2-Vae.".into());
+        return Err("Choose the folder that contains the music models.".into());
     }
     let m = manifest()?;
     let base = base_path(&app)?;
@@ -470,7 +468,7 @@ pub fn verify_models(
             save_verified(&base, &root, &m)?;
             manager.phase(
                 "verified",
-                "Your existing models are verified and can be reused. No model files were changed.",
+                "Your music models are ready. Nothing in the folder was changed.",
             );
             manager.update(|s| {
                 s.models_verified = true;
@@ -486,10 +484,13 @@ pub fn verify_models(
 fn verify_existing(root: &Path, m: &Manifest, manager: &ModelManager) -> Result<(), String> {
     let mut completed = 0;
     for file in &m.files {
-        manager.phase("verifying", "Checking model files. This may take a moment.");
+        manager.phase(
+            "verifying",
+            "Checking the music models. This takes about a minute.",
+        );
         manager.update(|s| s.current_file = Some(file.path.clone()));
         if !verify_file(&root.join(&file.path), file, manager, completed)? {
-            return Err(format!("{} is missing or does not match this model version. Choose a compatible folder or download a separate copy in Aulo.", file.path));
+            return Err("Some files in this folder are missing or aren’t the versions Aulo needs. Choose another folder, or let Aulo download its own copy.".into());
         }
         completed += file.bytes;
     }
@@ -546,7 +547,7 @@ fn prepare_downloads(
             s.current_file = Some(file.path.clone());
             s.completed_bytes = complete;
         });
-        manager.phase("verifying", "Checking saved model files…");
+        manager.phase("verifying", "Checking what’s already downloaded…");
         if verify_file(&target, file, manager, complete)? {
             complete += file.bytes;
             continue;
@@ -563,20 +564,20 @@ fn prepare_downloads(
         let free = fs2::available_space(root).map_err(io_error)?;
         if free < file.bytes.saturating_sub(offset) + RESERVE {
             return Err(
-                "There is not enough free storage. Free up some space, then resume the download."
+                "There isn’t enough free space. Free up some space, then resume the download."
                     .into(),
             );
         }
         if offset < file.bytes {
             transfer(client, file, &partial, manager, complete)?;
         }
-        manager.phase(
-            "verifying",
-            "Checking the downloaded file before keeping it…",
-        );
+        manager.phase("verifying", "Checking the download…");
         if !verify_file(&partial, file, manager, complete)? {
             fs::remove_file(&partial).map_err(io_error)?;
-            return Err("A downloaded file did not pass verification. It was discarded; retry to download a fresh copy.".into());
+            return Err(
+                "Part of the download was damaged and was removed. Try again to download it fresh."
+                    .into(),
+            );
         }
         if manager.cancelled() {
             return Err("Paused".into());
@@ -605,7 +606,7 @@ fn transfer(
         }
         manager.phase(
             "downloading",
-            "Downloading music models. You can pause and return later.",
+            "Downloading. You can pause and come back later.",
         );
         let result = transfer_range(client, file, partial, manager, base, offset);
         match result {
@@ -613,7 +614,7 @@ fn transfer(
                 offset = next;
                 failures = 0;
             }
-            Ok(_) => return Err("The download did not make progress. Please retry.".into()),
+            Ok(_) => return Err("The download stopped making progress. Try again.".into()),
             Err(error) => {
                 if manager.cancelled() {
                     return Err("Paused".into());
@@ -622,10 +623,7 @@ fn transfer(
                 if failures >= 3 {
                     return Err(error);
                 }
-                manager.phase(
-                    "retrying",
-                    "The download was interrupted. Retrying with saved progress…",
-                );
+                manager.phase("retrying", "The connection dropped. Trying again…");
                 let start = Instant::now();
                 while start.elapsed() < Duration::from_secs(failures) {
                     if manager.cancelled() {
@@ -654,7 +652,7 @@ fn transfer_range(
         .header("Accept-Encoding", "identity")
         .send()
         .map_err(|_| {
-            "Could not reach the model download service. Check your connection and retry."
+            "Aulo couldn’t reach the download. Check your internet connection and try again."
                 .to_string()
         })?;
     let append = if response.status() == StatusCode::PARTIAL_CONTENT {
@@ -665,14 +663,14 @@ fn transfer_range(
             .and_then(|h| h.to_str().ok())
             != Some(expected.as_str())
         {
-            return Err("The server returned an unexpected download range. Please retry.".into());
+            return Err("The download was interrupted. Try again.".into());
         }
         true
     } else if response.status() == StatusCode::OK {
         false
     } else {
         return Err(format!(
-            "The model service returned HTTP {}. Please try again later.",
+            "The download isn’t available right now (error {}). Try again later.",
             response.status().as_u16()
         ));
     };
@@ -694,14 +692,14 @@ fn transfer_range(
             writer.sync_all().map_err(io_error)?;
             return Err("Paused".into());
         }
-        let n = response.read(&mut buffer).map_err(|_| {
-            "The download connection was interrupted. Your progress has been kept.".to_string()
-        })?;
+        let n = response
+            .read(&mut buffer)
+            .map_err(|_| "The connection dropped. What’s downloaded so far is kept.".to_string())?;
         if n == 0 {
             break;
         }
         if received + n as u64 > limit {
-            return Err("The server returned more data than expected. Please retry.".into());
+            return Err("The download was interrupted. Try again.".into());
         }
         writer.write_all(&buffer[..n]).map_err(io_error)?;
         received += n as u64;
@@ -709,7 +707,7 @@ fn transfer_range(
     }
     writer.sync_all().map_err(io_error)?;
     if received != limit {
-        return Err("The file download ended early. Your progress has been kept.".into());
+        return Err("The download stopped early. What’s downloaded so far is kept.".into());
     }
     Ok(received)
 }

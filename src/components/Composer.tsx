@@ -7,13 +7,7 @@ import {
   Trash2,
   WandSparkles,
 } from "lucide-react";
-import {
-  addSection,
-  addStyle,
-  EMPTY_REQUEST,
-  SECTIONS,
-  styleIdeas,
-} from "../lib/composer";
+import { addSection, addStyle, SECTIONS, styleIdeas } from "../lib/composer";
 import type { CreationStatus, SongRequest, Vocal } from "../lib/songs";
 
 type Mode = "simple" | "advanced";
@@ -98,6 +92,7 @@ export default function Composer({
   creating,
   onCreate,
   onOpenSetup,
+  onClear,
 }: {
   request: SongRequest;
   onChange: (request: SongRequest) => void;
@@ -105,6 +100,7 @@ export default function Composer({
   creating: boolean;
   onCreate: () => void;
   onOpenSetup: () => void;
+  onClear: () => void;
 }) {
   const [mode, setModeState] = useState<Mode>(initialMode);
   const [round, setRound] = useState(0);
@@ -347,7 +343,8 @@ export default function Composer({
           className="clear-button"
           aria-label="Clear the form"
           title="Clear the form"
-          onClick={() => onChange(EMPTY_REQUEST)}
+          disabled={!request.style && !request.lyrics && !request.title}
+          onClick={onClear}
         >
           <Trash2 size={17} />
         </button>

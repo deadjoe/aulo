@@ -13,8 +13,10 @@ export default function PreparationBadge({ onOpen }: { onOpen: () => void }) {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout>;
     async function poll() {
+      let busy = false;
       try {
         const next = await getModelStatus();
+        busy = modelOperationActive(next);
         if (!stopped) {
           setStatus(next);
           setUnavailable(false);
@@ -22,7 +24,8 @@ export default function PreparationBadge({ onOpen }: { onOpen: () => void }) {
       } catch {
         if (!stopped) setUnavailable(true);
       }
-      if (!stopped) timer = setTimeout(() => void poll(), 1500);
+      // Quick updates during a download; a slow check otherwise.
+      if (!stopped) timer = setTimeout(() => void poll(), busy ? 1500 : 10000);
     }
     void poll();
     return () => {
@@ -30,20 +33,17 @@ export default function PreparationBadge({ onOpen }: { onOpen: () => void }) {
       clearTimeout(timer);
     };
   }, []);
-  let text = "Music models not set up";
-  if (unavailable) text = "Preparation status unavailable";
+  // Only visible while something about the music models needs the person.
+  if (status?.modelsVerified && !modelOperationActive(status)) return null;
+  let text = "Set up the music models";
+  if (unavailable) text = "Check the music models";
   else if (modelOperationActive(status))
-    text = `Preparing models · ${Math.min(100, Math.floor((status!.completedBytes / Math.max(status!.totalBytes, 1)) * 100))}%`;
-  else if (status?.phase === "paused") text = "Model preparation paused";
-  else if (status?.phase === "failed")
-    text = "Model preparation needs attention";
-  else if (status?.modelsVerified) text = "Music models ready";
-  else if (status?.phase === "unverified") text = "Saved models need a check";
+    text = `Downloading music models · ${Math.min(100, Math.floor((status!.completedBytes / Math.max(status!.totalBytes, 1)) * 100))}%`;
+  else if (status?.phase === "paused") text = "Music models paused";
+  else if (status?.phase === "failed") text = "Music models need attention";
+  else if (status?.phase === "unverified") text = "Check the music models";
   return (
-    <button
-      className={`setup-badge${status?.modelsVerified ? " ready" : ""}`}
-      onClick={onOpen}
-    >
+    <button className="setup-badge" onClick={onOpen}>
       <span />
       {text}
     </button>

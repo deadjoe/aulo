@@ -63,6 +63,11 @@ export const exportSong = (
   destination: string,
 ) => invoke<void>("export_song", { id, format, destination });
 export const revealSong = (id: string) => invoke<void>("reveal_song", { id });
+export const revealLibrary = () => invoke<void>("reveal_library");
+export const appVersion = async () => {
+  const { getVersion } = await import("@tauri-apps/api/app");
+  return getVersion();
+};
 export function onSongUpdated(handler: (song: Song) => void) {
   if (!isTauri()) return () => {};
   const stop = listen<Song>("song-updated", (event) => handler(event.payload));

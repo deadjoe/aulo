@@ -20,7 +20,8 @@ export default function Dialog({
           'button:not([disabled]), a[href], input, textarea, [tabindex="0"]',
         ) ?? [],
       );
-    focusable()[0]?.focus();
+    // Focus the dialog itself, so no control looks pre-selected.
+    panel.current?.focus();
     function handleKey(e: KeyboardEvent) {
       if (e.key === "Escape") {
         e.preventDefault();
@@ -30,7 +31,10 @@ export default function Dialog({
         const elements = focusable();
         const first = elements[0];
         const last = elements.at(-1);
-        if (e.shiftKey && document.activeElement === first) {
+        const atStart =
+          document.activeElement === first ||
+          document.activeElement === panel.current;
+        if (e.shiftKey && atStart) {
           e.preventDefault();
           last?.focus();
         } else if (!e.shiftKey && document.activeElement === last) {
@@ -53,6 +57,7 @@ export default function Dialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby="modal-title"
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
       >
         {children}

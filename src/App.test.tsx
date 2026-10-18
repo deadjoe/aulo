@@ -71,20 +71,19 @@ describe("first-run setup", () => {
     const user = userEvent.setup();
     const explore = vi.fn();
     render(<SetupWizard onExplore={explore} />);
-    await user.click(screen.getByRole("button", { name: /get started/ }));
+    await user.click(screen.getByRole("button", { name: /Get started/ }));
     expect(
       await screen.findByRole("heading", {
-        name: "A quick check in the desktop app",
+        name: "Aulo checks this in the app",
       }),
     ).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Continue" }));
-    expect(screen.getByText("Not prepared")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: /Continue/ }));
+    expect(screen.getByText("Not downloaded")).toBeVisible();
     expect(
       screen.queryByRole("button", { name: /Download music models/ }),
     ).not.toBeInTheDocument();
-    await user.click(
-      screen.getByRole("button", { name: "Explore the workspace" }),
-    );
+    expect(screen.queryByText(/YUE2|GROOVE|engine/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Look around first" }));
     expect(explore).toHaveBeenCalledOnce();
   });
 });
@@ -275,11 +274,23 @@ describe("library", () => {
     );
   });
 
+  it("shows settings without technical controls", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+    const dialog = screen.getByRole("dialog");
+    for (const title of ["Music models", "Music engine", "Your songs"])
+      expect(within(dialog).getByText(title)).toBeVisible();
+    expect(within(dialog).queryByRole("textbox")).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("combobox")).not.toBeInTheDocument();
+  });
+
   it("keeps agent integration explicitly unconnected and closes dialogs with Escape", async () => {
     const user = userEvent.setup();
     render(<App />);
     await user.click(screen.getByRole("button", { name: "AI connection" }));
-    expect(screen.getByText(/No agent is connected/)).toBeVisible();
+    expect(screen.getByText(/Nothing is connected yet/)).toBeVisible();
+    expect(screen.getByRole("dialog")).toHaveFocus();
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "AI connection" })).toHaveFocus();

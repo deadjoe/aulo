@@ -135,7 +135,8 @@ pub fn run() {
             songs::update_song,
             songs::trash_song,
             songs::export_song,
-            songs::reveal_song
+            songs::reveal_song,
+            songs::reveal_library
         ])
         .build(tauri::generate_context!())
         .expect("Failed to start Aulo")
