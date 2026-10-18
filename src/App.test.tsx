@@ -382,3 +382,40 @@ describe("library", () => {
     expect(screen.getByRole("button", { name: "AI connection" })).toHaveFocus();
   });
 });
+
+describe("save to", () => {
+  it("searches workspaces and creates one by name", async () => {
+    vi.mocked(songs.listCollections).mockResolvedValue({
+      workspaces: [
+        { id: "default", name: "My Workspace", createdMs: 0, archived: false },
+        { id: "rock", name: "Rock", createdMs: 1, archived: false },
+      ],
+      playlists: [],
+    });
+    vi.mocked(songs.createWorkspace).mockResolvedValue({
+      id: "jazz",
+      name: "Jazz",
+      createdMs: 2,
+      archived: false,
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    const pill = await screen.findByRole("button", { name: "My Workspace" });
+    await user.click(pill);
+    const search = screen.getByRole("textbox", {
+      name: "Search or create a workspace",
+    });
+    await user.type(search, "ro");
+    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "Rock0 songs",
+    ]);
+    await user.keyboard("{Enter}");
+    expect(screen.getByRole("button", { name: "Rock" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Rock" }));
+    await user.type(
+      screen.getByRole("textbox", { name: "Search or create a workspace" }),
+      "Jazz{Enter}",
+    );
+    expect(songs.createWorkspace).toHaveBeenCalledWith("Jazz");
+  });
+});

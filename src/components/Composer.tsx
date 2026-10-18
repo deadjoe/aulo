@@ -1,7 +1,6 @@
 import { useState } from "react";
 import {
   ChevronDown,
-  FolderOpen,
   Music2,
   RefreshCw,
   LoaderCircle,
@@ -95,7 +94,6 @@ export default function Composer({
   onOpenSetup,
   onClear,
   saveTo,
-  onChooseSaveTo,
 }: {
   request: SongRequest;
   onChange: (request: SongRequest) => void;
@@ -104,8 +102,8 @@ export default function Composer({
   onCreate: () => void;
   onOpenSetup: () => void;
   onClear: () => void;
-  saveTo: string;
-  onChooseSaveTo: () => void;
+  /** The "Save to" control, provided by the app. */
+  saveTo: React.ReactNode;
 }) {
   const [mode, setModeState] = useState<Mode>(initialMode);
   const [round, setRound] = useState(0);
@@ -343,13 +341,7 @@ export default function Composer({
           </p>
         )}
       </div>
-      <div className="save-to">
-        <FolderOpen size={17} />
-        <span>Save to</span>
-        <button className="tool-pill" onClick={onChooseSaveTo}>
-          {saveTo}
-        </button>
-      </div>
+      {saveTo}
       <footer className="composer-actions">
         <button
           className="clear-button"
