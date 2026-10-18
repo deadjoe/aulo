@@ -5,9 +5,11 @@ import {
   Copy,
   Download,
   Heart,
+  LoaderCircle,
   Pause,
   Play,
   RotateCcw,
+  Share,
 } from "lucide-react";
 import { SongCover } from "./SongList";
 import SongMenu, { type SongActions } from "./SongMenu";
@@ -18,6 +20,31 @@ import {
   statusLabel,
   type Song,
 } from "../lib/songs";
+
+function ShareButton({ song, actions }: { song: Song; actions: SongActions }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      className="round-button large"
+      aria-label="Share"
+      title="Share"
+      aria-busy={busy}
+      onClick={(e) => {
+        if (busy) return;
+        setBusy(true);
+        void actions
+          .onShare(song, e.currentTarget)
+          .finally(() => setBusy(false));
+      }}
+    >
+      {busy ? (
+        <LoaderCircle size={18} className="spin" />
+      ) : (
+        <Share size={18} />
+      )}
+    </button>
+  );
+}
 
 function CopyButton({ text, label }: { text: string; label: string }) {
   const [copied, setCopied] = useState(false);
@@ -127,6 +154,7 @@ export default function SongDetail({
               )}
               {current && playing ? "Pause" : "Play"}
             </button>
+            {finished && <ShareButton song={song} actions={actions} />}
             {!isActive(song) && (
               <button
                 className={`round-button large${song.favorite ? " loved" : ""}`}

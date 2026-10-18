@@ -131,6 +131,15 @@ export const exportSong = (
   format: AudioFormat,
   destination: string,
 ) => invoke<void>("export_song", { id, format, destination });
+export interface ShareAnchor {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+/** Open the system share sheet for a finished song, pointing from `anchor`. */
+export const shareSong = (id: string, title: string, anchor: ShareAnchor) =>
+  invoke<void>("share_song", { id, title, anchor });
 export const revealSong = (id: string) => invoke<void>("reveal_song", { id });
 export const revealLibrary = () => invoke<void>("reveal_library");
 export const appVersion = async () => {

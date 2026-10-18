@@ -36,6 +36,7 @@ vi.mock("./lib/songs", async (importOriginal) => {
     createPlaylist: vi.fn(),
     exportSong: vi.fn().mockResolvedValue(undefined),
     revealSong: vi.fn().mockResolvedValue(undefined),
+    shareSong: vi.fn().mockResolvedValue(undefined),
     audioUrl: vi.fn(() => "blob:audio"),
   };
 });
@@ -209,12 +210,22 @@ describe("library", () => {
       "Add to playlistCtrl+P",
       "Add to queueCtrl+U",
       "Move to workspaceCtrl+S",
+      "Share",
       "Download",
       "Show in Finder",
       "Move to TrashCtrl+Del",
     ]);
+    await user.click(within(menu).getByRole("menuitem", { name: "Share" }));
+    expect(songs.shareSong).toHaveBeenCalledWith(
+      "0123456789abcdef0123456789abcdef",
+      "Sunday",
+      expect.objectContaining({ x: expect.any(Number) }),
+    );
+    await user.click(screen.getByRole("button", { name: "More for Sunday" }));
     await user.click(
-      within(menu).getByRole("menuitem", { name: /Move to Trash/ }),
+      within(screen.getByRole("menu")).getByRole("menuitem", {
+        name: /Move to Trash/,
+      }),
     );
     const confirm = screen.getByRole("dialog");
     expect(
