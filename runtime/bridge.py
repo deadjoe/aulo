@@ -41,7 +41,21 @@ ODE_STEPS = 32
 # The community recipe recorded in GROOVE's EXCLUDE_INSTRUMENTAL_RESEARCH.md: YuE2 has no
 # instrumental switch, so ask with empty sections and no-vocal hints. Best effort only.
 INSTRUMENTAL_LYRICS = "[Verse]\n\n[Chorus]\n\n[Bridge]\n\n[Outro]\n"
+INSTRUMENTAL_HINTS = ("instrumental", "no vocals")
 VOCAL_HINTS = {"female": "female vocal", "male": "male vocal"}
+# The same recipe asks for no vocal words in the style. Only style parts that plainly
+# describe a voice are dropped; instruments, moods and genres stay as written.
+VOICE_WORDS = re.compile(
+    r"\b(vocals?|vocalists?|voices?|singers?|singing|sung|sings?|choirs?|choral|rap|rapping"
+    r"|rappers?|humming|scat|falsetto|a ?cappella|acapella|spoken|lyrics?)\b",
+    re.IGNORECASE)
+# Language tags name the sung language; dropped only when a style part is just that.
+LANGUAGES = {"english", "chinese", "mandarin", "cantonese", "japanese", "korean", "spanish",
+             "french", "german", "italian", "portuguese", "russian"}
+GENDER_WORDS = {
+    "female": re.compile(r"\b(female|woman|women|girls?|feminine)\b", re.IGNORECASE),
+    "male": re.compile(r"\b(male|man|men|boys?|masculine)\b", re.IGNORECASE),
+}
 
 
 def emit(stream, event, **fields):
@@ -68,12 +82,26 @@ def semantic_temperature(weirdness):
     return round(interpolate(weirdness, 0.85, 1.0, 1.25), 3)
 
 
+def without_parts(style, drop):
+    """``style`` without the comma-separated parts ``drop`` matches; unchanged otherwise."""
+    parts = [part.strip() for part in re.split(r"[,\n]", style)]
+    kept = [part for part in parts if part and not drop(part)]
+    if len(kept) == len([part for part in parts if part]):
+        return style
+    return ", ".join(kept)
+
+
+def is_voice_part(part):
+    return bool(VOICE_WORDS.search(part)) or part.lower() in LANGUAGES
+
+
 def song_texts(request):
     """The style and lyrics strings the engine receives for Aulo's simple controls."""
     style = request.get("style", "").strip()
     hints = []
     if request.get("instrumental"):
-        hints.append("instrumental")
+        style = without_parts(style, is_voice_part)
+        hints.extend(INSTRUMENTAL_HINTS)
         lyrics = INSTRUMENTAL_LYRICS
     else:
         lyrics = request.get("lyrics", "").strip()
@@ -82,8 +110,13 @@ def song_texts(request):
         # The model expects section labels; plain verses become one verse.
         if not any(line.lstrip().startswith("[") for line in lyrics.splitlines()):
             lyrics = f"[Verse]\n{lyrics}"
-        if request.get("vocal") in VOCAL_HINTS:
-            hints.append(VOCAL_HINTS[request["vocal"]])
+        vocal = request.get("vocal")
+        if vocal in VOCAL_HINTS:
+            # The chosen voice wins over a voice of the other gender named in the style.
+            other = GENDER_WORDS["male" if vocal == "female" else "female"]
+            style = without_parts(
+                style, lambda part: bool(other.search(part) and VOICE_WORDS.search(part)))
+            hints.append(VOCAL_HINTS[vocal])
     # Only add hints the style does not already say.
     hints = [hint for hint in hints if hint not in style.lower()]
     style = ", ".join(part for part in [style, *hints] if part)
@@ -154,7 +187,7 @@ def validate_command(command):
     if operation != "generate":
         raise ValueError("Unknown engine command.")
     allowed = {"operation", "workId", "style", "lyrics", "instrumental", "vocal", "weirdness",
-               "styleInfluence", "modelRoot", "outputRoot"}
+               "styleInfluence", "seed", "modelRoot", "outputRoot"}
     if set(command) - allowed:
         raise ValueError("Unexpected generation fields.")
     for key, limit in (("style", 1000), ("lyrics", 16000)):
@@ -169,6 +202,9 @@ def validate_command(command):
         value = command.get(key, 50)
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 100:
             raise ValueError(f"Invalid {key}.")
+    seed = command.get("seed", 0)
+    if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed < 2**31:
+        raise ValueError("Invalid seed.")
     for key in ("modelRoot", "outputRoot"):
         value = command.get(key)
         if not isinstance(value, str) or not Path(value).is_absolute():
@@ -258,7 +294,8 @@ class Engine:
             if cancelled():
                 raise InterruptedError("Cancelled before generation")
             song_request = adapter.song_request(
-                style=style, lyrics=lyrics, cot="full", seed=secrets.randbelow(2**31),
+                style=style, lyrics=lyrics, cot="full",
+                seed=request["seed"] if "seed" in request else secrets.randbelow(2**31),
                 cfg_scale=cfg_scale(request.get("styleInfluence", 50)), id=request["workId"],
             )
             abc_sampling = adapter.sampling(**ABC_SAMPLING)

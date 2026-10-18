@@ -47,7 +47,8 @@ class BridgeTests(unittest.TestCase):
                        {"style": "", "lyrics": ""}, {"backend": "custom"}, {"abc": "X:1"},
                        {"workId": "../x"}, {"weirdness": 101}, {"styleInfluence": True},
                        {"vocal": "robot"}, {"instrumental": "yes"}, {"lyrics": ""},
-                       {"operation": "shell"}]:
+                       {"operation": "shell"}, {"seed": -1}, {"seed": 2**31}, {"seed": True},
+                       {"seed": 1.5}]:
             with self.assertRaises(ValueError):
                 bridge.validate_command(request | update)
 
@@ -61,7 +62,7 @@ class BridgeTests(unittest.TestCase):
 
     def test_song_texts_follow_the_instrumental_recipe_and_vocal_hints(self):
         style, lyrics = bridge.song_texts({"style": "lofi", "instrumental": True, "vocal": "female"})
-        self.assertEqual(style, "lofi, instrumental")
+        self.assertEqual(style, "lofi, instrumental, no vocals")
         self.assertIn("[Chorus]", lyrics)
         style, lyrics = bridge.song_texts({"style": "pop", "lyrics": "hello", "vocal": "male"})
         self.assertEqual(style, "pop, male vocal")
@@ -70,6 +71,30 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(style, "Pop, Female Vocal")
         _, lyrics = bridge.song_texts({"style": "pop", "lyrics": "[Chorus]\nhey"})
         self.assertEqual(lyrics, "[Chorus]\nhey")
+
+    def test_instrumentals_drop_only_style_parts_that_describe_a_voice(self):
+        style, _ = bridge.song_texts({
+            "style": "dreamy indie pop, Female Vocal, airy choir\nwarm analog synths, English, "
+                     "rap verses, lyrical piano, 92 bpm, tape hum",
+            "instrumental": True})
+        self.assertEqual(style, "dreamy indie pop, warm analog synths, lyrical piano, 92 bpm, "
+                                "tape hum, instrumental, no vocals")
+        style, _ = bridge.song_texts({"style": "lofi, chinese guzheng", "instrumental": True})
+        self.assertEqual(style, "lofi, chinese guzheng, instrumental, no vocals")
+        style, _ = bridge.song_texts({"style": "soft male vocals", "instrumental": True})
+        self.assertEqual(style, "instrumental, no vocals")
+
+    def test_the_chosen_voice_replaces_the_other_gender_in_the_style(self):
+        style, _ = bridge.song_texts(
+            {"style": "rock, deep male vocals, man choir, male energy", "lyrics": "x", "vocal": "female"})
+        self.assertEqual(style, "rock, male energy, female vocal")
+        style, _ = bridge.song_texts(
+            {"style": "pop, Female Vocal", "lyrics": "x", "vocal": "male"})
+        self.assertEqual(style, "pop, male vocal")
+        style, _ = bridge.song_texts({"style": "pop, female vocal", "lyrics": "x", "vocal": "auto"})
+        self.assertEqual(style, "pop, female vocal")
+        style, _ = bridge.song_texts({"style": "pop\nfemale singer", "lyrics": "x", "vocal": "female"})
+        self.assertEqual(style, "pop\nfemale singer, female vocal")
 
     def test_backend_selection_delegates_to_groove(self):
         adapter, gguf = Mock(), Mock()
@@ -133,7 +158,7 @@ class BridgeTests(unittest.TestCase):
             (root / "YuE2-3B").mkdir()
             (root / "YuE2-Vae").mkdir()
             adapter, _, soundfile, modules = self.fake_engine()
-            request = generate_request(directory, styleInfluence=50, weirdness=100)
+            request = generate_request(directory, styleInfluence=50, weirdness=100, seed=1234)
             runtime = {"device": "mps", "backend": "torch"}
             with patch.dict(sys.modules, modules):
                 engine = bridge.Engine(runtime)
@@ -145,6 +170,7 @@ class BridgeTests(unittest.TestCase):
                 self.assertTrue(load["local_files_only"])
                 self.assertEqual((load["backend"], load["ode_steps"]), ("torch", 32))
                 self.assertEqual(adapter.song_request.call_args.kwargs["cfg_scale"], 1.5)
+                self.assertEqual(adapter.song_request.call_args.kwargs["seed"], 1234)
                 self.assertEqual(adapter.sampling.call_args_list[1].kwargs["temperature"], 1.25)
                 # The loaded model is reused for the next song.
                 soundfile.info.side_effect = RuntimeError("invalid audio")
