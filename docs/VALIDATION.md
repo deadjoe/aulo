@@ -3,7 +3,7 @@
 ## Resident engine and song actions increment — 2026-10-18
 
 - `npm run check`: 24 frontend/component tests and the production build.
-- `python3 -m unittest discover -s runtime/tests`: 15 bridge tests (serving protocol, command validation, cancellation routing, model reuse, failure isolation).
+- `python3 -m unittest discover -s runtime/tests`: 14 bridge tests (serving protocol, command validation, cancellation routing, model reuse, failure isolation).
 - `cargo test --locked`: 29 native tests, including fixture engines that serve commands, never become ready, or crash; clippy with warnings denied.
 - Opt-in live test `live_resident_engine_generates_and_reuses_the_model` (64 GiB Apple Silicon, MPS, existing GROOVE development interpreter): one resident engine made a song (185.2 s), stopped a second song 0.15 s after `cancel` was sent in the performing stage, then made a third song whose preparation took under 1 ms because the loaded model was reused (203.9 s). Both songs decoded fully (53.0 s and 47.8 s of audio). The engine shut down cleanly; the log has no fatal error.
 - Browser-preview review of the Suno-style progress (cover spinner, "Creating…"), the song menu and the song details, using temporary local fixtures that were not committed.
