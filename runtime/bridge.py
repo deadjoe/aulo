@@ -294,9 +294,10 @@ class Engine:
             if info.frames <= 0 or info.samplerate <= 0:
                 raise RuntimeError("The music engine did not produce playable audio.")
             # Do not publish completion until all generated files have been flushed.
+            # Windows only flushes handles opened for writing, so open them read-write.
             for path in work.rglob("*"):
                 if path.is_file():
-                    with path.open("rb") as handle:
+                    with path.open("r+b") as handle:
                         os.fsync(handle.fileno())
             pending.unlink()
             return {"audio": "audio.flac", "duration": info.duration,
