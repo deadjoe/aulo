@@ -11,3 +11,4 @@ src-tauri/gen/
 __pycache__/
 *.py[cod]
 /artifacts/
+src-tauri/engine/

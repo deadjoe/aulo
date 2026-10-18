@@ -444,9 +444,9 @@ impl SongService {
         }
     }
 
-    fn start_engine(&self, base: &Path) -> Result<EngineProcess, String> {
+    fn start_engine(&self, base: &Path, resources: &Path) -> Result<EngineProcess, String> {
         let script = engine::bridge_script().map_err(|e| e.to_string())?;
-        let python = engine::interpreter(base);
+        let python = engine::interpreter(resources);
         let mut command = engine::bridge_command(&python, script.path(), base);
         command.stderr(Stdio::from(engine_log(base)?));
         let process = EngineProcess::start(
@@ -493,7 +493,8 @@ impl SongService {
             if let Some(old) = engine.take() {
                 old.kill();
             }
-            *engine = Some(self.start_engine(&base).map_err(|_| {
+            let resources = engine::resources(app)?;
+            *engine = Some(self.start_engine(&base, &resources).map_err(|_| {
                 "The music engine could not start. Close and reopen Aulo to try again.".to_string()
             })?);
         }

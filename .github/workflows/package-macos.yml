@@ -1,0 +1,37 @@
+name: Package macOS app
+
+# Builds the self-contained music engine and the Aulo app that carries it.
+# Manual or on version tags: the engine download is large, so ordinary pushes skip it.
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: astral-sh/setup-uv@v6
+      - run: npm ci
+      - name: Build the bundled engine
+        run: python3 scripts/build_engine.py --out src-tauri/engine
+      - name: Check the engine starts without any other Python
+        run: |
+          echo '{"protocolVersion":3,"operation":"probe"}' \
+            | env -i HOME="$HOME" PYTHONDONTWRITEBYTECODE=1 HF_HUB_OFFLINE=1 \
+              src-tauri/engine/python/bin/python3 -I runtime/bridge.py
+      - name: Bundle Aulo with the engine
+        run: npm run bundle -- --bundles app,dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Aulo-macos-arm64
+          path: src-tauri/target/release/bundle/dmg/*.dmg
