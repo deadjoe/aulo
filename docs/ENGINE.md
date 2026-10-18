@@ -24,19 +24,19 @@ GGUF engine binaries, when bundled, sit beside the interpreter in `engine/yue2cp
 
 ## Generation
 
-`generate` accepts the simple controls the UI shows: `style`, `lyrics`, `instrumental`, `vocal`, `weirdness`, and `styleInfluence`, plus the work identifier and absolute model and output roots. Scores, seeds, sampling values, and engine names are never accepted from the UI.
+`generate` accepts the simple controls the UI shows: `style`, `lyrics`, `instrumental`, `vocal`, `weirdness`, and `styleInfluence`, plus the work identifier, the take's seed, and absolute model and output roots. Aulo chooses the seed when a song starts and records it with the song; scores, sampling values, and engine names are never accepted from the UI.
 
 The bridge maps the controls onto GROOVE's documented recipes ([GENERATION_CREATIVITY_KNOBS.md](https://github.com/deadjoe/yue2_groove/blob/main/docs/GENERATION_CREATIVITY_KNOBS.md)) and keeps every other value at GROOVE's defaults:
 
-| Control                       | Engine value                                                                       |
-| ----------------------------- | ---------------------------------------------------------------------------------- |
-| Style influence 0 / 50 / 100  | CFG unguided / 1.5 / 2.0                                                           |
-| Weirdness 0 / 50 / 100        | Semantic temperature 0.85 / 1.0 / 1.25                                             |
-| Voice female / male           | `female vocal` / `male vocal` added to the style                                   |
-| Instrumental                  | GROOVE's best-effort recipe: empty lyric sections and an `instrumental` style hint |
-| Lyrics without section labels | Wrapped in one `[Verse]`                                                           |
+| Control                       | Engine value                                                                                                                                         |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Style influence 0 / 50 / 100  | CFG unguided / 1.5 / 2.0                                                                                                                             |
+| Weirdness 0 / 50 / 100        | Semantic temperature 0.85 / 1.0 / 1.25                                                                                                               |
+| Voice female / male           | `female vocal` / `male vocal` added to the style; style parts naming a voice of the other gender are dropped                                         |
+| Instrumental                  | GROOVE's best-effort recipe: empty lyric sections, style parts that describe a voice or a sung language dropped, and `instrumental, no vocals` added |
+| Lyrics without section labels | Wrapped in one `[Verse]`                                                                                                                             |
 
-YuE2 has no instrumental switch, so the UI says that some humming can still appear. Plan mode is always `full`, ODE steps are GROOVE's default 32, the seed is random per song, and the semantic budget is trimmed to the model context as GROOVE does.
+YuE2 has no instrumental switch, so the UI says that some humming can still appear. Plan mode is always `full`, ODE steps are GROOVE's default 32, the seed is random per song and recorded with it, and the semantic budget is trimmed to the model context as GROOVE does.
 
 The engine reports real stages (preparing, writing, performing, rendering, mixing, saving) and NAR/VAE step counts. The interface does not show them: like Suno, it shows a spinner on the song's cover and "Creating…", because stage names mean nothing to the people Aulo is for. The stages remain in each record for diagnostics and the watchdog. Completed output must contain decodable, nonempty audio, and artifacts are flushed before the pending marker is removed. Cancelled and failed runs keep a pending marker with their state.
 

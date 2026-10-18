@@ -28,10 +28,24 @@ fn work(id: &str, state: SongState) -> Work {
         message: None,
         workspace: DEFAULT_WORKSPACE.into(),
         trashed_ms: None,
+        seed: None,
     }
 }
 
 const ID: &str = "0123456789abcdef0123456789abcdef";
+
+#[test]
+fn seeds_are_recorded_and_older_records_have_none() {
+    assert!((0..100).all(|_| new_seed() < 1 << 31));
+    let mut w = work(ID, SongState::Completed);
+    let old = serde_json::to_value(&w).unwrap();
+    assert!(old.get("seed").is_none());
+    let back: Work = serde_json::from_value(old).unwrap();
+    assert_eq!(back.seed, None);
+    w.seed = Some(42);
+    let json = serde_json::to_value(&w).unwrap();
+    assert_eq!(json["seed"], 42);
+}
 
 #[test]
 fn requests_need_a_sound_and_words_or_an_instrumental() {
@@ -160,6 +174,7 @@ fn engine_process_serves_commands_and_streams_events() {
         .send(&generate_command(
             ID,
             &request(),
+            7,
             Path::new("/m"),
             Path::new("/o"),
         ))
@@ -175,6 +190,7 @@ fn engine_process_serves_commands_and_streams_events() {
     let lines = fs::read_to_string(captured).unwrap();
     assert!(lines.contains("\"operation\":\"serve\""));
     assert!(lines.contains("\"operation\":\"generate\""));
+    assert!(lines.contains("\"seed\":7"));
     assert!(lines.contains("\"operation\":\"shutdown\""));
 }
 
@@ -240,7 +256,7 @@ fn live_song(live: &Live, cancel_at: Option<&str>) -> (Vec<EngineEvent>, PathBuf
     r.lyrics = "[Verse]\nMorning light across the kitchen floor\nCoffee warm and nothing more\n[Chorus]\nSlow down, slow down, Sunday".into();
     let started = std::time::Instant::now();
     live.process
-        .send(&generate_command(&id, &r, &live.models, &live.output))
+        .send(&generate_command(&id, &r, 11, &live.models, &live.output))
         .unwrap();
     let mut events = Vec::new();
     loop {

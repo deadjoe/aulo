@@ -113,6 +113,9 @@ pub struct Work {
     /// Set while the song is in Aulo's Trash; it can be restored until deleted.
     #[serde(default)]
     pub trashed_ms: Option<u64>,
+    /// The engine seed this take used, recorded so a take can be reproduced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<u32>,
 }
 
 fn default_workspace() -> String {
@@ -133,6 +136,11 @@ fn now_ms() -> u64 {
 
 fn new_id() -> String {
     uuid::Uuid::new_v4().simple().to_string()
+}
+
+/// A fresh take: any value the engine accepts, below 2^31.
+fn new_seed() -> u32 {
+    (uuid::Uuid::new_v4().as_u128() as u32) & 0x7FFF_FFFF
 }
 
 pub fn valid_id(id: &str) -> bool {
@@ -495,7 +503,7 @@ impl SongService {
         let root = base.join("library");
         let model_root = models::verified_root(app, &app.state::<models::ModelManager>())
             .ok_or("Your music models need to be checked again before creating.")?;
-        let request = {
+        let (request, seed) = {
             let state = self.0 .0.lock().unwrap();
             let work = state
                 .works
@@ -505,9 +513,10 @@ impl SongService {
             if work.state != SongState::Queued {
                 return Ok(());
             }
-            work.request.clone()
+            (work.request.clone(), work.seed.unwrap_or_else(new_seed))
         };
         self.update(app, id, true, |work| {
+            work.seed = Some(seed);
             work.state = SongState::Running;
             work.stage = Some("preparing".into());
             work.started_ms = Some(now_ms());
@@ -523,7 +532,7 @@ impl SongService {
             })?);
         }
         let process = engine.as_ref().expect("engine started");
-        process.send(&generate_command(id, &request, &model_root, &root))?;
+        process.send(&generate_command(id, &request, seed, &model_root, &root))?;
         let cancel_now = {
             let mut state = self.0 .0.lock().unwrap();
             state.current = Some(id.to_string());
@@ -606,6 +615,7 @@ impl SongService {
 pub fn generate_command(
     id: &str,
     request: &SongRequest,
+    seed: u32,
     model_root: &Path,
     output_root: &Path,
 ) -> serde_json::Value {
@@ -618,6 +628,7 @@ pub fn generate_command(
         "vocal": request.vocal,
         "weirdness": request.weirdness,
         "styleInfluence": request.style_influence,
+        "seed": seed,
         "modelRoot": model_root,
         "outputRoot": output_root,
     })
@@ -703,6 +714,7 @@ pub fn create_song(
         message: None,
         workspace,
         trashed_ms: None,
+        seed: None,
     };
     write_record(&root, &work)?;
     service.with_state(&app, |state| {
