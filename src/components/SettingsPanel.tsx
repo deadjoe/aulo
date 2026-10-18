@@ -293,7 +293,12 @@ function StorageSection({
             void deleteSongs(ids)
               .then((deleted) => {
                 onDeleted(deleted);
-                notify("The Trash is empty.");
+                const left = ids.length - deleted.length;
+                notify(
+                  left === 0
+                    ? "The Trash is empty."
+                    : `${count(left)} couldn’t be deleted. Try again.`,
+                );
               })
               .catch((e: unknown) => {
                 notify(problem(e, "Some songs couldn’t be deleted."));
@@ -519,16 +524,10 @@ function AboutSection({ notify }: { notify: (text: string) => void }) {
           disabled={!desktop || saving}
           onClick={() => {
             setSaving(true);
-            void (async () => {
-              const { save } = await import("@tauri-apps/plugin-dialog");
-              const path = await save({
-                defaultPath: "Aulo problem report.txt",
-                filters: [{ name: "Text", extensions: ["txt"] }],
-              });
-              if (!path) return;
-              await saveReport(path);
-              notify("Problem report saved.");
-            })()
+            void saveReport()
+              .then((saved) => {
+                if (saved) notify("Problem report saved.");
+              })
               .catch((e: unknown) =>
                 notify(problem(e, "The report couldn’t be saved.")),
               )

@@ -57,7 +57,7 @@ Production distribution requires signing, notarization where applicable, and pla
 
 The bundled manifest pins 17 files from the official YuE2 repositories, totaling 7,794,565,436 bytes (7.79 GB). Model weights use CC BY-NC 4.0; the wizard links to the model license before download. Models are stored in the application data directory, outside the app bundle. Existing model folders are never rewritten. The supported import layout is a parent folder containing `YuE2-3B/` and `YuE2-Vae/` matching the manifest; GGUF-only folders and arbitrary cache layouts are not yet supported.
 
-Verified models are one of two creation requirements; the other is a working music engine with a supported accelerator. No inference runtime is bundled or installed by this version. Full multi-GB transfer and clean-machine runtime compatibility remain validation gates; automated tests use small local fixtures and an explicit pinned 959-byte live download.
+Creating needs verified models, a computer that meets the hardware rule (Apple silicon with 32 GB of memory, or an NVIDIA card with 8 GB on Windows), and the bundled music engine finding a supported accelerator. The macOS app ships its engine inside the bundle; the Windows engine package is not built yet. Full multi-GB transfer and clean-machine runtime compatibility remain validation gates; automated tests use small local fixtures and an explicit pinned 959-byte live download.
 
 Build the bundled engine once (needs uv and network access), then package the app with it:
 

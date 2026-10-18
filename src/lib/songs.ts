@@ -126,11 +126,9 @@ export const removeFromPlaylist = (id: string, songs: string[]) =>
 export const songWaveform = (id: string) =>
   invoke<number[]>("song_waveform", { id });
 export type AudioFormat = "m4a" | "mp3" | "wav" | "flac";
-export const exportSong = (
-  id: string,
-  format: AudioFormat,
-  destination: string,
-) => invoke<void>("export_song", { id, format, destination });
+/** Save a finished song: Aulo opens the save window. False when it was cancelled. */
+export const exportSong = (id: string, format: AudioFormat, name: string) =>
+  invoke<boolean>("export_song", { id, format, name });
 export interface ShareAnchor {
   x: number;
   y: number;

@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { Check, LoaderCircle, X } from "lucide-react";
-import { save } from "@tauri-apps/plugin-dialog";
 import Dialog from "./Dialog";
 import {
   displayTitle,
@@ -64,22 +63,11 @@ export default function DownloadDialog({
     } catch {
       /* ignore */
     }
-    const name = title.replace(/[\\/:*?"<>|]/g, "").trim() || "Aulo song";
-    let path: string | null;
-    try {
-      path = await save({
-        defaultPath: `${name}.${format}`,
-        filters: [{ name: format.toUpperCase(), extensions: [format] }],
-      });
-    } catch {
-      setError("The save window could not be opened.");
-      return;
-    }
-    if (!path) return;
     setSaving(true);
     try {
-      await exportSong(song.id, format, path);
-      onDone("Downloaded.");
+      // Aulo opens the save window itself; false means it was cancelled.
+      if (await exportSong(song.id, format, title)) onDone("Downloaded.");
+      else setSaving(false);
     } catch (e) {
       setError(
         typeof e === "string" && e.length < 200

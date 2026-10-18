@@ -1,5 +1,13 @@
 # Validation record
 
+## Follow-up review — 2026-10-19
+
+- Removing models: the idle engine is now forgotten only after it has exited, so waiting for it (removal, Free up memory now) waits for the real exit; after any removal attempt the model state is read back from disk, so a half-finished removal is never treated as ready (`a_removal_that_stops_halfway_never_leaves_the_models_ready`).
+- `create_song` applies the same hardware rule as the creation status, so Create another version cannot bypass it.
+- Downloads and problem reports are written only where the person chose in a save window that Aulo opens natively; the interface can no longer name a path, and the webview lost the save-dialog permission. Chosen names always end in the format (`saved_files_always_end_in_their_format`).
+- Permanent delete, Empty Trash and restore report exactly which songs succeeded; component tests cover partial failure.
+- "Memory freed." appears only after the engine has exited.
+
 ## Settings — 2026-10-19
 
 - Native tests: settings defaults, damaged and out-of-range files, round trip; the idle-engine decision (keep loaded, unload after 10 minutes, unload now); Trash expiry including a clock set back; model removal deletes only Aulo's folder, keeps a chosen folder and does not follow a link; storage separates songs from the Trash and does not follow links; the problem report removes written lines and states what it leaves out.

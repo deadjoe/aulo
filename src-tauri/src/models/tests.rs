@@ -338,3 +338,23 @@ fn removing_models_does_not_follow_a_link_out_of_aulos_folder() {
     assert!(!base.path().join("models").exists());
     assert!(elsewhere.path().join("keep.txt").exists());
 }
+
+#[test]
+fn a_removal_that_stops_halfway_never_leaves_the_models_ready() {
+    let base = tempfile::tempdir().unwrap();
+    let m = catalog(fixture(b"hello world"));
+    let root = managed_root(base.path(), &m);
+    fs::create_dir_all(root.join("YuE2-3B")).unwrap();
+    fs::write(root.join(&m.files[0].path), b"hello world").unwrap();
+    save_verified(base.path(), &root, &m).unwrap();
+    assert!(restore_status(base.path(), &m).models_verified);
+    // Files gone but the record still there, as after an interrupted removal.
+    fs::remove_file(root.join(&m.files[0].path)).unwrap();
+    let state = restore_status(base.path(), &m);
+    assert!(!state.models_verified);
+    assert_ne!(state.phase, "verified");
+    // A completed removal starts from scratch.
+    remove_model_files(base.path()).unwrap();
+    let state = restore_status(base.path(), &m);
+    assert_eq!(state.phase, "not_started");
+}

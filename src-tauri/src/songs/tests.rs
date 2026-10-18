@@ -492,3 +492,23 @@ fn records_without_a_workspace_belong_to_my_workspace() {
     let parsed: Work = serde_json::from_value(json).unwrap();
     assert_eq!(parsed.workspace, DEFAULT_WORKSPACE);
 }
+
+#[test]
+fn saved_files_always_end_in_their_format() {
+    assert_eq!(
+        with_extension(PathBuf::from("/Users/me/Music/Sunday.mp3"), "mp3"),
+        PathBuf::from("/Users/me/Music/Sunday.mp3")
+    );
+    assert_eq!(
+        with_extension(PathBuf::from("/Users/me/Music/Sunday.MP3"), "mp3"),
+        PathBuf::from("/Users/me/Music/Sunday.MP3")
+    );
+    assert_eq!(
+        with_extension(PathBuf::from("/Users/me/Music/Sunday"), "wav"),
+        PathBuf::from("/Users/me/Music/Sunday.wav")
+    );
+    assert_eq!(
+        with_extension(PathBuf::from("/Users/me/Music/Sunday.v2"), "flac"),
+        PathBuf::from("/Users/me/Music/Sunday.v2.flac")
+    );
+}

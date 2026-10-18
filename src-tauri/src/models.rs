@@ -500,7 +500,7 @@ pub async fn remove_models(
         return Err("The music models are being prepared. Pause or finish that first.".into());
     }
     let _guard = BusyGuard(manager.inner().clone());
-    let before = manager.0.status.lock().unwrap().clone();
+    let base_for_status = base.clone();
     // From here on nothing may start a song with these models.
     manager.update(|s| {
         s.models_verified = false;
@@ -514,18 +514,12 @@ pub async fn remove_models(
     })
     .await
     .map_err(|e| e.to_string())?;
-    match result {
-        Ok((kept, base)) => {
-            *manager.0.status.lock().unwrap() = Some(restore_status(&base, &m));
-            Ok(RemovedModels {
-                kept_folder: kept.map(|p| p.to_string_lossy().into_owned()),
-            })
-        }
-        Err(error) => {
-            *manager.0.status.lock().unwrap() = before;
-            Err(error)
-        }
-    }
+    // Whatever happened, read the state back from disk: after a partial removal the
+    // models must not be considered ready, and after a refusal they still are.
+    *manager.0.status.lock().unwrap() = Some(restore_status(&base_for_status, &m));
+    result.map(|(kept, _)| RemovedModels {
+        kept_folder: kept.map(|p| p.to_string_lossy().into_owned()),
+    })
 }
 
 #[tauri::command]

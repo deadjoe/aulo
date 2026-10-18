@@ -223,6 +223,30 @@ export default function App() {
     ids
       .map((id) => songs.find((s) => s.id === id))
       .filter((s): s is Song => s !== undefined);
+  // Songs by id, including those in the Trash.
+  const anySongsIn = (ids: string[]) =>
+    ids
+      .map((id) => allSongs.find((s) => s.id === id))
+      .filter((s): s is Song => s !== undefined);
+  /** Take songs out of the Trash and say exactly what came back. */
+  const restore = (list: Song[]) =>
+    void trashSongs(
+      list.map((s) => s.id),
+      false,
+    ).then(
+      (back) => {
+        const left = list.length - back.length;
+        notify(
+          left === 0
+            ? `Restored ${titleOf(list)}.`
+            : back.length === 0
+              ? "These songs couldn’t be restored. Try again."
+              : `Restored ${titleOf(anySongsIn(back))}. ${count(left, "song")} couldn’t be restored; try again.`,
+        );
+      },
+      (error: unknown) =>
+        notify(problem(error, "These songs could not be restored.")),
+    );
   const titleOf = (list: Song[]) =>
     list.length === 1
       ? `“${displayTitle(list[0].request)}”`
@@ -289,8 +313,8 @@ export default function App() {
               notify(
                 left === 0
                   ? `Moved ${titleOf(list)} to the Trash.`
-                  : `Moved ${titleOf(songsIn(moved))} to the Trash. ${count(left, "song")} couldn’t be moved; try again.`,
-                moved.length ? () => void trashSongs(moved, false) : null,
+                  : `Moved ${titleOf(anySongsIn(moved))} to the Trash. ${count(left, "song")} couldn’t be moved; try again.`,
+                moved.length ? () => restore(anySongsIn(moved)) : null,
               );
             },
             (error: unknown) =>
@@ -493,15 +517,7 @@ export default function App() {
           <header className="library-head">{libraryHead}</header>
           <TrashView
             songs={trashed}
-            onRestore={(list) =>
-              void act(
-                trashSongs(
-                  list.map((s) => s.id),
-                  false,
-                ).then(() => notify(`Restored ${titleOf(list)}.`)),
-                "These songs could not be restored.",
-              )
-            }
+            onRestore={restore}
             onDelete={(list) =>
               setConfirming({
                 title: `Delete ${titleOf(list)} for good?`,
@@ -510,8 +526,16 @@ export default function App() {
                 run: () =>
                   void act(
                     deleteSongs(list.map((s) => s.id)).then((gone) => {
+                      // Only what really went leaves the Trash view.
                       remove(gone);
-                      notify(`Deleted ${titleOf(list)}.`);
+                      const left = list.length - gone.length;
+                      notify(
+                        left === 0
+                          ? `Deleted ${titleOf(list)}.`
+                          : gone.length === 0
+                            ? "These songs couldn’t be deleted. Try again."
+                            : `Deleted ${titleOf(anySongsIn(gone))}. ${count(left, "song")} couldn’t be deleted; try again.`,
+                      );
                     }),
                     "Some songs could not be deleted.",
                   ),
