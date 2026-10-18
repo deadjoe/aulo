@@ -11,6 +11,8 @@ import {
 import CoverArt from "./CoverArt";
 import { audioUrl, displayTitle, formatTime, type Song } from "../lib/songs";
 
+const songLength = (length: number, song: Song) => length || song.duration || 0;
+
 export function usePlayer(songs: Song[]) {
   const audio = useRef<HTMLAudioElement | null>(null);
   const [currentId, setCurrentId] = useState<string | null>(null);
@@ -73,7 +75,7 @@ export function usePlayer(songs: Song[]) {
     }
   }, [current, currentId]);
 
-  const start = useCallback((song: Song) => {
+  const start = useCallback((song: Song, at = 0) => {
     const el = audio.current;
     const url = audioUrl(song);
     if (!el || !url) return;
@@ -82,8 +84,29 @@ export function usePlayer(songs: Song[]) {
     setTime(0);
     setLength(song.duration ?? 0);
     el.src = url;
+    if (at > 0)
+      el.addEventListener(
+        "loadedmetadata",
+        () => {
+          el.currentTime = at * el.duration;
+        },
+        { once: true },
+      );
     void el.play().catch(() => setError("This song could not be played."));
   }, []);
+
+  /** Play `song` from a point (0..1), starting it first if needed. */
+  const seekTo = useCallback(
+    (song: Song, fraction: number) => {
+      const el = audio.current;
+      if (!el) return;
+      if (song.id !== currentId) return start(song, fraction);
+      if (Number.isFinite(el.duration)) el.currentTime = fraction * el.duration;
+      if (el.paused)
+        void el.play().catch(() => setError("This song could not be played."));
+    },
+    [currentId, start],
+  );
 
   const toggle = useCallback(
     (song?: Song) => {
@@ -131,10 +154,26 @@ export function usePlayer(songs: Song[]) {
     return () => el.removeEventListener("ended", ended);
   }, [currentId, playable, queue, start]);
 
+  /** Play these songs now, in order, replacing what was queued. */
+  const playAll = useCallback(
+    (songs: Song[]) => {
+      if (!songs.length) return;
+      start(songs[0]);
+      setQueue(songs.slice(1).map((s) => s.id));
+    },
+    [start],
+  );
+
+  /** Songs play after the current one, in the order given. */
   const enqueue = useCallback(
-    (song: Song) => {
-      if (!currentId) return start(song);
-      setQueue((q) => [...q, song.id]);
+    (songs: Song[]) => {
+      if (!songs.length) return;
+      if (!currentId) {
+        start(songs[0]);
+        setQueue((q) => [...q, ...songs.slice(1).map((s) => s.id)]);
+        return;
+      }
+      setQueue((q) => [...q, ...songs.map((s) => s.id)]);
     },
     [currentId, start],
   );
@@ -154,9 +193,15 @@ export function usePlayer(songs: Song[]) {
     error,
     toggle,
     enqueue,
+    playAll,
     queued: queue.length,
     step,
     seek,
+    seekTo,
+    progress:
+      current && songLength(length, current)
+        ? time / songLength(length, current)
+        : null,
     setVolume: setVolumeState,
     setMuted,
     hasSongs: playable.length > 0,

@@ -1,4 +1,5 @@
 mod audio;
+mod collections;
 mod engine;
 mod models;
 mod runner;
@@ -133,7 +134,18 @@ pub fn run() {
             songs::create_song,
             songs::cancel_song,
             songs::update_song,
-            songs::trash_song,
+            songs::trash_songs,
+            songs::list_collections,
+            songs::create_workspace,
+            songs::rename_workspace,
+            songs::archive_workspace,
+            songs::move_songs,
+            songs::create_playlist,
+            songs::rename_playlist,
+            songs::delete_playlist,
+            songs::add_to_playlist,
+            songs::remove_from_playlist,
+            songs::song_waveform,
             songs::export_song,
             songs::reveal_song,
             songs::reveal_library

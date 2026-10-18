@@ -1,4 +1,5 @@
 use super::*;
+use crate::collections::DEFAULT_WORKSPACE;
 
 fn request() -> SongRequest {
     SongRequest {
@@ -25,6 +26,7 @@ fn work(id: &str, state: SongState) -> Work {
         duration: None,
         audio_path: None,
         message: None,
+        workspace: DEFAULT_WORKSPACE.into(),
     }
 }
 
@@ -384,4 +386,12 @@ fn song_state_keeps_its_lowercase_file_format() {
     assert_eq!(json["state"], "interrupted");
     let parsed: Work = serde_json::from_value(json).unwrap();
     assert_eq!(parsed.state, SongState::Interrupted);
+}
+
+#[test]
+fn records_without_a_workspace_belong_to_my_workspace() {
+    let mut json = serde_json::to_value(work(ID, SongState::Completed)).unwrap();
+    json.as_object_mut().unwrap().remove("workspace");
+    let parsed: Work = serde_json::from_value(json).unwrap();
+    assert_eq!(parsed.workspace, DEFAULT_WORKSPACE);
 }

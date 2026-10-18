@@ -22,6 +22,7 @@ const song = (id: string, state: Song["state"] = "completed"): Song => ({
   duration: null,
   audioPath: null,
   message: null,
+  workspace: "default",
 });
 
 describe("library updates", () => {
@@ -51,5 +52,50 @@ describe("library updates", () => {
     expect(statusLabel({ ...song("a", "failed"), message: "Try again." })).toBe(
       "Try again.",
     );
+  });
+});
+
+import { applyView, DEFAULT_VIEW, groupSongs } from "./view";
+
+describe("library view", () => {
+  const a = { ...song("a"), createdMs: 1, favorite: true };
+  const b = {
+    ...song("b"),
+    createdMs: 2,
+    request: { ...song("b").request, instrumental: false, title: "Zebra" },
+  };
+  const c = {
+    ...song("c"),
+    createdMs: 3,
+    request: { ...song("c").request, title: "Apple", style: "jazz trio" },
+  };
+  const all = [a, b, c];
+
+  it("sorts by date, likes and title", () => {
+    const ids = (sort: typeof DEFAULT_VIEW.sort) =>
+      applyView(all, { ...DEFAULT_VIEW, sort }).map((s) => s.id);
+    expect(ids("newest")).toEqual(["c", "b", "a"]);
+    expect(ids("oldest")).toEqual(["a", "b", "c"]);
+    expect(ids("liked")).toEqual(["a", "c", "b"]);
+    expect(ids("title")).toEqual(["a", "c", "b"]);
+  });
+
+  it("filters by likes, vocals and search text", () => {
+    const view = (filters: Partial<typeof DEFAULT_VIEW.filters>, query = "") =>
+      applyView(all, {
+        ...DEFAULT_VIEW,
+        query,
+        filters: { ...DEFAULT_VIEW.filters, ...filters },
+      }).map((s) => s.id);
+    expect(view({ liked: true })).toEqual(["a"]);
+    expect(view({ vocals: true })).toEqual(["b"]);
+    expect(view({ instrumental: true })).toEqual(["c", "a"]);
+    expect(view({ instrumental: true, vocals: true })).toHaveLength(3);
+    expect(view({}, "JAZZ")).toEqual(["c"]);
+  });
+
+  it("groups by day only when sorted by date", () => {
+    expect(groupSongs(all, "title")).toEqual([["", all]]);
+    expect(groupSongs(all, "newest")[0][1]).toHaveLength(3);
   });
 });

@@ -27,6 +27,10 @@ Future integration boundary
 
 Works are stored in an application-owned library with atomic record writes and startup reconciliation. Backup and migration policies remain future work.
 
+## Organising songs
+
+Each song belongs to one workspace (My Workspace by default, chosen with Save to when creating) and can appear in any number of playlists. Workspaces and playlists live in `<app-data>/library/collections.json`, replaced atomically; `src-tauri/src/collections.rs` owns the rules (My Workspace always exists and is never archived, names are cleaned and unique among workspaces, playlists skip duplicates and drop songs that go to the Trash). Lists share one panel (`LibraryPanel`) with search, filters, sort, List/Waveform/Grid layouts, multi-select with Shift ranges, and batch actions with shortcuts (⌘P playlist, ⌘U queue, ⌘S workspace, ⌘⌫ Trash). Waveform peaks are computed natively from the FLAC once and cached beside it as `waveform.json`.
+
 ## Model preparation
 
 `src-tauri/src/models.rs` owns the pinned catalog, downloads, checksums, and saved locations. UI components use typed commands in `src/lib/models.ts`; they never receive an arbitrary URL-download primitive. Network transfers run on a worker thread. An in-process guard and an OS file lock prevent concurrent preparation of shared storage.

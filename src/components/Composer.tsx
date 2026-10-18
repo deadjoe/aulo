@@ -1,6 +1,7 @@
 import { useState } from "react";
 import {
   ChevronDown,
+  FolderOpen,
   Music2,
   RefreshCw,
   LoaderCircle,
@@ -93,6 +94,8 @@ export default function Composer({
   onCreate,
   onOpenSetup,
   onClear,
+  saveTo,
+  onChooseSaveTo,
 }: {
   request: SongRequest;
   onChange: (request: SongRequest) => void;
@@ -101,6 +104,8 @@ export default function Composer({
   onCreate: () => void;
   onOpenSetup: () => void;
   onClear: () => void;
+  saveTo: string;
+  onChooseSaveTo: () => void;
 }) {
   const [mode, setModeState] = useState<Mode>(initialMode);
   const [round, setRound] = useState(0);
@@ -337,6 +342,13 @@ export default function Composer({
             humming now and then.
           </p>
         )}
+      </div>
+      <div className="save-to">
+        <FolderOpen size={17} />
+        <span>Save to</span>
+        <button className="tool-pill" onClick={onChooseSaveTo}>
+          {saveTo}
+        </button>
       </div>
       <footer className="composer-actions">
         <button
