@@ -15,6 +15,9 @@ import PreparationBadge from "./components/PreparationBadge";
 import EngineStatus from "./components/EngineStatus";
 import Composer from "./components/Composer";
 import SongList from "./components/SongList";
+import SongDetail from "./components/SongDetail";
+import type { SongActions } from "./components/SongMenu";
+import { save } from "@tauri-apps/plugin-dialog";
 import Player, { usePlayer } from "./components/Player";
 import { Brand } from "./components/Brand";
 import { loadComposer, saveComposer } from "./lib/composer";
@@ -22,8 +25,10 @@ import {
   cancelSong,
   createSong,
   creationStatus,
-  deleteSong,
   displayTitle,
+  exportSong,
+  revealSong,
+  trashSong,
   listSongs,
   onSongUpdated,
   updateSong,
@@ -33,8 +38,7 @@ import {
 } from "./lib/songs";
 
 type Page = "create" | "library";
-type Modal =
-  { kind: "settings" } | { kind: "agent" } | { kind: "delete"; song: Song };
+type Modal = { kind: "settings" } | { kind: "agent" };
 
 function initialView() {
   try {
@@ -56,7 +60,17 @@ export default function App() {
   const [status, setStatus] = useState<CreationStatus | null>(null);
   const [creating, setCreating] = useState(false);
   const [message, setMessage] = useState("");
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState<string | null>(null);
   const player = usePlayer(songs);
+  const openSong = songs.find((s) => s.id === openId) ?? null;
+
+  // Messages confirm or explain; they leave on their own.
+  useEffect(() => {
+    if (!message) return;
+    const timer = window.setTimeout(() => setMessage(""), 4500);
+    return () => window.clearTimeout(timer);
+  }, [message]);
 
   const refreshStatus = useCallback(() => {
     creationStatus().then(setStatus, () =>
@@ -105,18 +119,25 @@ export default function App() {
     setSetupStep(2);
     setExplored(false);
   }
+  async function start(next: SongRequest) {
+    const song = await createSong(next);
+    setSongs((list) =>
+      list.some((s) => s.id === song.id) ? list : [song, ...list],
+    );
+    return song;
+  }
   async function create() {
     setCreating(true);
+    // A short, visible acknowledgement on the button, like a press.
+    const settle = new Promise((resolve) => window.setTimeout(resolve, 700));
     try {
-      const song = await createSong(request);
-      setSongs((list) =>
-        list.some((s) => s.id === song.id) ? list : [song, ...list],
-      );
-      setMessage(`Creating “${displayTitle(song.request)}”.`);
+      await start(request);
+      setOpenId(null);
     } catch (error) {
       setMessage(problem(error, "This song could not be started."));
       refreshStatus();
     } finally {
+      await settle;
       setCreating(false);
     }
   }
@@ -126,34 +147,87 @@ export default function App() {
   if (!explored)
     return <SetupWizard onExplore={explore} initialStep={setupStep} />;
 
+  const actions: SongActions = {
+    onAnotherVersion: (song) =>
+      void start({ ...song.request }).then(
+        () => setMessage("A new version is on its way."),
+        (error: unknown) =>
+          setMessage(problem(error, "A new version could not be started.")),
+      ),
+    onReuse: (song) => {
+      setRequest(song.request);
+      setOpenId(null);
+      setPage("create");
+    },
+    onRename: (song) => setRenaming(song.id),
+    onDownload: (song) =>
+      void save({
+        defaultPath: `${displayTitle(song.request).replace(/[\\/:*?"<>|]/g, "")}.flac`,
+        filters: [{ name: "FLAC audio", extensions: ["flac"] }],
+      }).then(
+        (path) => {
+          if (!path) return;
+          void exportSong(song.id, path).then(
+            () => setMessage("Saved."),
+            (error: unknown) =>
+              setMessage(problem(error, "The song could not be saved.")),
+          );
+        },
+        () => setMessage("The save window could not be opened."),
+      ),
+    onReveal: (song) =>
+      void act(revealSong(song.id), "The song's folder could not be opened."),
+    onQueue: (song) => {
+      player.enqueue(song);
+      setMessage(`“${displayTitle(song.request)}” plays next.`);
+    },
+    onTrash: (song) =>
+      void trashSong(song.id).then(
+        () => {
+          setSongs((list) => list.filter((s) => s.id !== song.id));
+          if (openId === song.id) setOpenId(null);
+          setMessage("Moved to the Trash.");
+        },
+        (error: unknown) =>
+          setMessage(
+            problem(error, "This song could not be moved to the Trash."),
+          ),
+      ),
+  };
+  const renamed = (song: Song, title: string | null) => {
+    setRenaming(null);
+    if (title)
+      void act(
+        updateSong(song.id, { title }),
+        "The new title could not be saved.",
+      );
+  };
+  const favorite = (song: Song) =>
+    void act(
+      updateSong(song.id, { favorite: !song.favorite }),
+      "This change could not be saved.",
+    );
+
   const list = (
     <SongList
       songs={songs}
       heading={page === "create" ? "My workspace" : "Library"}
       current={player.current?.id ?? null}
       playing={player.playing}
+      renaming={renaming}
+      onRenamed={renamed}
       onPlay={(song) => player.toggle(song)}
-      onFavorite={(song) =>
-        void act(
-          updateSong(song.id, { favorite: !song.favorite }),
-          "This change could not be saved.",
-        )
-      }
+      onOpen={(song) => setOpenId(song.id)}
+      onFavorite={favorite}
       onCancel={(song) =>
         void act(cancelSong(song.id), "This song could not be stopped.")
       }
-      onReuse={(song) => {
-        setRequest(song.request);
-        setPage("create");
-        setMessage("The song's settings are back in the create panel.");
-      }}
-      onRename={(song, title) =>
-        void act(
-          updateSong(song.id, { title }),
-          "The new title could not be saved.",
+      onRetry={(song) =>
+        void start({ ...song.request }).catch((error: unknown) =>
+          setMessage(problem(error, "This song could not be started.")),
         )
       }
-      onDelete={(song) => setModal({ kind: "delete", song })}
+      actions={actions}
       emptyAction={
         page === "library" ? (
           <button className="secondary" onClick={() => setPage("create")}>
@@ -172,7 +246,10 @@ export default function App() {
           <button
             className={page === "create" ? "active" : ""}
             aria-current={page === "create" ? "page" : undefined}
-            onClick={() => setPage("create")}
+            onClick={() => {
+              setPage("create");
+              setOpenId(null);
+            }}
           >
             <WandSparkles />
             Create
@@ -180,7 +257,10 @@ export default function App() {
           <button
             className={page === "library" ? "active" : ""}
             aria-current={page === "library" ? "page" : undefined}
-            onClick={() => setPage("library")}
+            onClick={() => {
+              setPage("library");
+              setOpenId(null);
+            }}
           >
             <Library />
             Library
@@ -199,27 +279,37 @@ export default function App() {
           </button>
         </div>
       </aside>
-      <div className={`workspace ${page}`}>
-        {page === "create" && (
-          <Composer
-            request={request}
-            onChange={setRequest}
-            status={status}
-            creating={creating}
-            onCreate={() => void create()}
-            onOpenSetup={openSetup}
+      <div className={`workspace ${openSong ? "detail" : page}`}>
+        {openSong ? (
+          <SongDetail
+            song={openSong}
+            playing={player.playing}
+            current={player.current?.id === openSong.id}
+            renaming={renaming === openSong.id}
+            onRenamed={renamed}
+            onBack={() => setOpenId(null)}
+            onPlay={(song) => player.toggle(song)}
+            onFavorite={favorite}
+            actions={actions}
           />
+        ) : (
+          page === "create" && (
+            <Composer
+              request={request}
+              onChange={setRequest}
+              status={status}
+              creating={creating}
+              onCreate={() => void create()}
+              onOpenSetup={openSetup}
+            />
+          )
         )}
-        {list}
+        {!openSong && list}
       </div>
       <Player
         player={player}
-        onFavorite={(song) =>
-          void act(
-            updateSong(song.id, { favorite: !song.favorite }),
-            "This change could not be saved.",
-          )
-        }
+        onFavorite={favorite}
+        onOpen={(song) => setOpenId(song.id)}
       />
       {message && (
         <div className="toast" role="status">
@@ -233,34 +323,6 @@ export default function App() {
             <X size={15} />
           </button>
         </div>
-      )}
-      {modal?.kind === "delete" && (
-        <Dialog onClose={() => setModal(null)}>
-          <h2 id="modal-title">Delete “{displayTitle(modal.song.request)}”?</h2>
-          <p>The song and its audio are removed from this computer.</p>
-          <div className="dialog-actions">
-            <button className="secondary" onClick={() => setModal(null)}>
-              Keep it
-            </button>
-            <button
-              className="danger-button"
-              onClick={() => {
-                const song = modal.song;
-                setModal(null);
-                void deleteSong(song.id).then(
-                  () =>
-                    setSongs((list) => list.filter((s) => s.id !== song.id)),
-                  (error: unknown) =>
-                    setMessage(
-                      problem(error, "This song could not be deleted."),
-                    ),
-                );
-              }}
-            >
-              Delete song
-            </button>
-          </div>
-        </Dialog>
       )}
       {(modal?.kind === "settings" || modal?.kind === "agent") && (
         <Dialog onClose={() => setModal(null)}>

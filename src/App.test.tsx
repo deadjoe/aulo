@@ -22,7 +22,9 @@ vi.mock("./lib/songs", async (importOriginal) => {
     createSong: vi.fn(),
     cancelSong: vi.fn().mockResolvedValue(undefined),
     updateSong: vi.fn().mockResolvedValue(undefined),
-    deleteSong: vi.fn().mockResolvedValue(undefined),
+    trashSong: vi.fn().mockResolvedValue(undefined),
+    exportSong: vi.fn().mockResolvedValue(undefined),
+    revealSong: vi.fn().mockResolvedValue(undefined),
     audioUrl: vi.fn(() => "blob:audio"),
   };
 });
@@ -143,12 +145,15 @@ describe("create panel", () => {
     expect(songs.createSong).toHaveBeenCalledWith(
       expect.objectContaining({ style: "lofi", lyrics: "Morning light" }),
     );
-    expect(await screen.findByText("Waiting for its turn")).toBeVisible();
+    expect(
+      await screen.findByRole("img", { name: "Waiting to start…" }),
+    ).toBeVisible();
+    expect(screen.queryByText(/Creating “/)).not.toBeInTheDocument();
   });
 });
 
 describe("library", () => {
-  it("shows real progress, lets a running song stop, and plays finished songs", async () => {
+  it("shows plain progress, stops a running song, and offers the song menu", async () => {
     vi.mocked(songs.listSongs).mockResolvedValue([
       song({
         id: "fedcba9876543210fedcba9876543210",
@@ -163,7 +168,10 @@ describe("library", () => {
     ]);
     const user = userEvent.setup();
     render(<App />);
-    expect(await screen.findByText(/Recording · 25%/)).toBeVisible();
+    expect(await screen.findByText("Creating…")).toBeVisible();
+    expect(
+      screen.queryByText(/Recording|Performing|%/),
+    ).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Stop" }));
     expect(songs.cancelSong).toHaveBeenCalledWith(
       "fedcba9876543210fedcba9876543210",
@@ -176,12 +184,55 @@ describe("library", () => {
       { favorite: true },
     );
     await user.click(screen.getByRole("button", { name: "More for Sunday" }));
-    await user.click(screen.getByRole("menuitem", { name: "Delete" }));
-    const dialog = screen.getByRole("dialog");
+    const menu = screen.getByRole("menu");
+    expect(
+      within(menu)
+        .getAllByRole("menuitem")
+        .map((item) => item.textContent),
+    ).toEqual([
+      "Create another version",
+      "Reuse settings",
+      "Rename",
+      "Download",
+      "Show in Finder",
+      "Add to queue",
+      "Move to Trash",
+    ]);
     await user.click(
-      within(dialog).getByRole("button", { name: "Delete song" }),
+      within(menu).getByRole("menuitem", { name: "Move to Trash" }),
     );
-    expect(songs.deleteSong).toHaveBeenCalledOnce();
+    expect(songs.trashSong).toHaveBeenCalledWith(
+      "0123456789abcdef0123456789abcdef",
+    );
+    expect(await screen.findByText("Moved to the Trash.")).toBeVisible();
+  });
+
+  it("opens a song's details with its lyrics and makes another version", async () => {
+    vi.mocked(songs.listSongs).mockResolvedValue([
+      song({ request: { ...song().request, title: "Sunday" } }),
+    ]);
+    vi.mocked(songs.createSong).mockResolvedValue(
+      song({
+        id: "fedcba9876543210fedcba9876543210",
+        state: "queued",
+        duration: null,
+        audioPath: null,
+      }),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "Sunday" }));
+    expect(screen.getByRole("heading", { name: "Sunday" })).toBeVisible();
+    expect(screen.getByText(/Morning light on the window/)).toBeVisible();
+    expect(screen.queryByText(/comment/i)).not.toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Create another version" }),
+    );
+    expect(songs.createSong).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Sunday", style: "dreamy indie pop" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Back" }));
+    expect(screen.getByRole("heading", { name: "My workspace" })).toBeVisible();
   });
 
   it("titles untitled songs from their first sung line", () => {

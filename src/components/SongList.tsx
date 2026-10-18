@@ -1,13 +1,7 @@
-import { useEffect, useRef, useState } from "react";
-import {
-  Heart,
-  MoreHorizontal,
-  Pause,
-  Play,
-  Search,
-  Square,
-} from "lucide-react";
+import { useState } from "react";
+import { Heart, Pause, Play, RotateCcw, Search, Square } from "lucide-react";
 import CoverArt from "./CoverArt";
+import SongMenu, { type SongActions } from "./SongMenu";
 import {
   displayTitle,
   formatTime,
@@ -31,76 +25,56 @@ function dayLabel(ms: number, now = new Date()): string {
   });
 }
 
-function Elapsed({ since }: { since: number | null }) {
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, []);
-  return since ? <>{formatTime((now - since) / 1000)}</> : null;
-}
-
-function SongMenu({
+export function SongCover({
   song,
-  onReuse,
-  onRename,
-  onDelete,
+  playing,
+  current,
+  onPlay,
+  size = "md",
 }: {
   song: Song;
-  onReuse: () => void;
-  onRename: () => void;
-  onDelete: () => void;
+  playing: boolean;
+  current: boolean;
+  onPlay: (song: Song) => void;
+  size?: "md" | "lg";
 }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const close = (e: MouseEvent | KeyboardEvent) => {
-      if (
-        e instanceof KeyboardEvent
-          ? e.key === "Escape"
-          : !ref.current?.contains(e.target as Node)
-      )
-        setOpen(false);
-    };
-    document.addEventListener("mousedown", close);
-    document.addEventListener("keydown", close);
-    return () => {
-      document.removeEventListener("mousedown", close);
-      document.removeEventListener("keydown", close);
-    };
-  }, [open]);
   const title = displayTitle(song.request);
-  const run = (action: () => void) => () => {
-    setOpen(false);
-    action();
-  };
+  const active = isActive(song);
+  const playable = song.state === "completed" && !!song.audioPath;
   return (
-    <div className="menu-anchor" ref={ref}>
-      <button
-        className="round-button"
-        aria-label={`More for ${title}`}
-        aria-expanded={open}
-        onClick={() => setOpen(!open)}
-      >
-        <MoreHorizontal size={18} />
-      </button>
-      {open && (
-        <div className="menu" role="menu">
-          <button role="menuitem" onClick={run(onReuse)}>
-            Reuse these settings
-          </button>
-          <button role="menuitem" onClick={run(onRename)}>
-            Rename
-          </button>
-          {!isActive(song) && (
-            <button role="menuitem" className="danger" onClick={run(onDelete)}>
-              Delete
-            </button>
+    <button
+      className={`song-cover cover-button-${size}`}
+      disabled={!playable}
+      aria-label={
+        playable
+          ? current && playing
+            ? `Pause ${title}`
+            : `Play ${title}`
+          : title
+      }
+      onClick={() => onPlay(song)}
+    >
+      <CoverArt id={song.id} style={song.request.style} size={size} />
+      {playable && (
+        <span className="cover-play">
+          {current && playing ? (
+            <Pause size={size === "lg" ? 34 : 20} fill="currentColor" />
+          ) : (
+            <Play size={size === "lg" ? 34 : 20} fill="currentColor" />
           )}
-        </div>
+        </span>
       )}
-    </div>
+      {active && (
+        <span
+          className={`cover-spinner${song.state === "queued" ? " waiting" : ""}`}
+          role="img"
+          aria-label={statusLabel(song)}
+        />
+      )}
+      {song.duration != null && size === "md" && (
+        <span className="duration">{formatTime(song.duration)}</span>
+      )}
+    </button>
   );
 }
 
@@ -109,29 +83,32 @@ export default function SongList({
   heading,
   current,
   playing,
+  renaming,
+  onRenamed,
   onPlay,
+  onOpen,
   onFavorite,
   onCancel,
-  onReuse,
-  onRename,
-  onDelete,
+  onRetry,
+  actions,
   emptyAction,
 }: {
   songs: Song[];
   heading: string;
   current: string | null;
   playing: boolean;
+  renaming: string | null;
+  onRenamed: (song: Song, title: string | null) => void;
   onPlay: (song: Song) => void;
+  onOpen: (song: Song) => void;
   onFavorite: (song: Song) => void;
   onCancel: (song: Song) => void;
-  onReuse: (song: Song) => void;
-  onRename: (song: Song, title: string) => void;
-  onDelete: (song: Song) => void;
+  onRetry: (song: Song) => void;
+  actions: SongActions;
   emptyAction?: React.ReactNode;
 }) {
   const [query, setQuery] = useState("");
   const [favorites, setFavorites] = useState(false);
-  const [renaming, setRenaming] = useState<string | null>(null);
   const visible = songs.filter(
     (s) =>
       (!favorites || s.favorite) &&
@@ -201,45 +178,19 @@ export default function SongList({
               {items.map((song) => {
                 const title = displayTitle(song.request);
                 const active = isActive(song);
-                const playable = song.state === "completed" && !!song.audioPath;
-                const isCurrent = current === song.id;
+                const unfinished =
+                  song.state === "failed" || song.state === "interrupted";
                 return (
                   <article
                     key={song.id}
-                    className={`song-row${isCurrent ? " current" : ""}${active ? " active" : ""}`}
+                    className={`song-row${current === song.id ? " current" : ""}`}
                   >
-                    <button
-                      className="song-cover"
-                      disabled={!playable}
-                      aria-label={
-                        playable
-                          ? isCurrent && playing
-                            ? `Pause ${title}`
-                            : `Play ${title}`
-                          : title
-                      }
-                      onClick={() => onPlay(song)}
-                    >
-                      <CoverArt
-                        id={song.id}
-                        style={song.request.style}
-                        active={active}
-                      />
-                      {playable && (
-                        <span className="cover-play">
-                          {isCurrent && playing ? (
-                            <Pause size={20} fill="currentColor" />
-                          ) : (
-                            <Play size={20} fill="currentColor" />
-                          )}
-                        </span>
-                      )}
-                      {song.duration != null && (
-                        <span className="duration">
-                          {formatTime(song.duration)}
-                        </span>
-                      )}
-                    </button>
+                    <SongCover
+                      song={song}
+                      playing={playing}
+                      current={current === song.id}
+                      onPlay={onPlay}
+                    />
                     <div className="song-text">
                       {renaming === song.id ? (
                         <input
@@ -250,28 +201,28 @@ export default function SongList({
                           autoFocus
                           onKeyDown={(e) => {
                             if (e.key === "Enter") e.currentTarget.blur();
-                            if (e.key === "Escape") setRenaming(null);
+                            if (e.key === "Escape") onRenamed(song, null);
                           }}
                           onBlur={(e) => {
-                            if (renaming !== song.id) return;
-                            setRenaming(null);
                             const next = e.currentTarget.value.trim();
-                            if (next && next !== title) onRename(song, next);
+                            onRenamed(
+                              song,
+                              next && next !== title ? next : null,
+                            );
                           }}
                         />
                       ) : (
-                        <strong>{title}</strong>
+                        <button
+                          className="song-title"
+                          onClick={() => onOpen(song)}
+                        >
+                          {title}
+                        </button>
                       )}
                       <p>{song.request.style}</p>
                       {song.state !== "completed" && (
                         <span className={`song-status state-${song.state}`}>
                           {statusLabel(song)}
-                          {song.state === "running" && (
-                            <>
-                              {" · "}
-                              <Elapsed since={song.startedMs} />
-                            </>
-                          )}
                         </span>
                       )}
                     </div>
@@ -283,6 +234,14 @@ export default function SongList({
                         >
                           <Square size={12} fill="currentColor" />
                           Stop
+                        </button>
+                      ) : unfinished ? (
+                        <button
+                          className="pill-button"
+                          onClick={() => onRetry(song)}
+                        >
+                          <RotateCcw size={14} />
+                          Try again
                         </button>
                       ) : (
                         <button
@@ -299,12 +258,7 @@ export default function SongList({
                           />
                         </button>
                       )}
-                      <SongMenu
-                        song={song}
-                        onReuse={() => onReuse(song)}
-                        onRename={() => setRenaming(song.id)}
-                        onDelete={() => onDelete(song)}
-                      />
+                      <SongMenu song={song} actions={actions} />
                     </div>
                   </article>
                 );

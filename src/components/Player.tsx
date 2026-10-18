@@ -20,6 +20,8 @@ export function usePlayer(songs: Song[]) {
   const [volume, setVolumeState] = useState(0.9);
   const [muted, setMuted] = useState(false);
   const [error, setError] = useState("");
+  // Songs the listener asked to hear next, before the library order resumes.
+  const [queue, setQueue] = useState<string[]>([]);
   const playable = songs.filter((s) => s.state === "completed" && s.audioPath);
   const current = songs.find((s) => s.id === currentId) ?? null;
 
@@ -111,12 +113,28 @@ export function usePlayer(songs: Song[]) {
     const el = audio.current;
     if (!el) return;
     const ended = () => {
+      const queued = queue
+        .map((id) => playable.find((s) => s.id === id))
+        .find((s) => s !== undefined);
+      if (queued) {
+        setQueue((q) => q.slice(q.indexOf(queued.id) + 1));
+        start(queued);
+        return;
+      }
       const index = playable.findIndex((s) => s.id === currentId);
       if (index >= 0 && index < playable.length - 1) start(playable[index + 1]);
     };
     el.addEventListener("ended", ended);
     return () => el.removeEventListener("ended", ended);
-  }, [currentId, playable, start]);
+  }, [currentId, playable, queue, start]);
+
+  const enqueue = useCallback(
+    (song: Song) => {
+      if (!currentId) return start(song);
+      setQueue((q) => [...q, song.id]);
+    },
+    [currentId, start],
+  );
 
   const seek = (seconds: number) => {
     if (audio.current) audio.current.currentTime = seconds;
@@ -132,6 +150,8 @@ export function usePlayer(songs: Song[]) {
     muted,
     error,
     toggle,
+    enqueue,
+    queued: queue.length,
     step,
     seek,
     setVolume: setVolumeState,
@@ -143,9 +163,11 @@ export function usePlayer(songs: Song[]) {
 export default function Player({
   player,
   onFavorite,
+  onOpen,
 }: {
   player: ReturnType<typeof usePlayer>;
   onFavorite: (song: Song) => void;
+  onOpen: (song: Song) => void;
 }) {
   const { current } = player;
   const title = current ? displayTitle(current.request) : "Nothing playing";
@@ -159,7 +181,13 @@ export default function Player({
           <span className="cover cover-sm cover-empty" aria-hidden="true" />
         )}
         <span>
-          <strong>{title}</strong>
+          {current ? (
+            <button className="player-title" onClick={() => onOpen(current)}>
+              {title}
+            </button>
+          ) : (
+            <strong>{title}</strong>
+          )}
           <small>
             {player.error ||
               (current
