@@ -1,7 +1,7 @@
-import { useState } from "react";
-import { Heart, Pause, Play, RotateCcw, Search, Square } from "lucide-react";
+import { Check, Heart, Pause, Play, RotateCcw, Square } from "lucide-react";
 import CoverArt from "./CoverArt";
 import SongMenu, { type SongActions } from "./SongMenu";
+import Waveform from "./Waveform";
 import {
   displayTitle,
   formatTime,
@@ -9,21 +9,7 @@ import {
   statusLabel,
   type Song,
 } from "../lib/songs";
-
-function dayLabel(ms: number, now = new Date()): string {
-  const date = new Date(ms);
-  const start = (d: Date) =>
-    new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-  const days = Math.round((start(now) - start(date)) / 86_400_000);
-  if (days === 0) return "Today";
-  if (days === 1) return "Yesterday";
-  return date.toLocaleDateString(undefined, {
-    weekday: "long",
-    month: "short",
-    day: "numeric",
-    year: date.getFullYear() === now.getFullYear() ? undefined : "numeric",
-  });
-}
+import type { Layout } from "../lib/view";
 
 export function SongCover({
   song,
@@ -78,195 +64,216 @@ export function SongCover({
   );
 }
 
-export default function SongList({
-  songs,
-  heading,
-  current,
-  playing,
-  renaming,
-  onRenamed,
-  onPlay,
-  onOpen,
-  onFavorite,
-  onCancel,
-  onRetry,
-  actions,
-  emptyAction,
-}: {
-  songs: Song[];
-  heading: string;
+export interface SongListProps {
+  groups: [string, Song[]][];
+  layout: Layout;
   current: string | null;
   playing: boolean;
+  /** How far the current song has played, 0..1. */
+  progress: number | null;
+  selected: Set<string>;
   renaming: string | null;
+  onToggleSelect: (song: Song, range: boolean) => void;
   onRenamed: (song: Song, title: string | null) => void;
   onPlay: (song: Song) => void;
+  onSeek: (song: Song, fraction: number) => void;
   onOpen: (song: Song) => void;
   onFavorite: (song: Song) => void;
   onCancel: (song: Song) => void;
   onRetry: (song: Song) => void;
   actions: SongActions;
-  emptyAction?: React.ReactNode;
+  targetsFor: (song: Song) => Song[];
+}
+
+function SelectBox({
+  song,
+  selected,
+  onToggle,
+}: {
+  song: Song;
+  selected: boolean;
+  onToggle: (song: Song, range: boolean) => void;
 }) {
-  const [query, setQuery] = useState("");
-  const [favorites, setFavorites] = useState(false);
-  const visible = songs.filter(
-    (s) =>
-      (!favorites || s.favorite) &&
-      `${displayTitle(s.request)} ${s.request.style} ${s.request.lyrics}`
-        .toLowerCase()
-        .includes(query.trim().toLowerCase()),
-  );
-  const groups: [string, Song[]][] = [];
-  for (const song of visible) {
-    const label = dayLabel(song.createdMs);
-    const group = groups.at(-1);
-    if (group?.[0] === label) group[1].push(song);
-    else groups.push([label, [song]]);
-  }
   return (
-    <main className="library" aria-label={heading}>
-      <header className="library-bar">
-        <h1>{heading}</h1>
-        <label className="search">
-          <Search size={16} />
-          <input
-            aria-label="Search your songs"
-            placeholder="Search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-        </label>
-        <button
-          className={`filter-chip${favorites ? " selected" : ""}`}
-          aria-pressed={favorites}
-          onClick={() => setFavorites(!favorites)}
-        >
-          <Heart size={14} fill={favorites ? "currentColor" : "none"} />
-          Liked
-        </button>
-      </header>
-      {songs.length === 0 ? (
-        <div className="empty-library">
-          <CoverArt id="aulo-empty-state" style="dreamy" size="lg" />
-          <h2>Your songs will live here</h2>
-          <p>Describe a sound, add your words, and press Create.</p>
-          {emptyAction}
-        </div>
-      ) : visible.length === 0 ? (
-        <div className="empty-library small">
-          <h2>{query ? "No songs match that search" : "No liked songs yet"}</h2>
-          <p>
-            {query
-              ? "Try a different title, word, or style."
-              : "Tap the heart on a song to keep it here."}
-          </p>
-          <button
-            className="secondary"
-            onClick={() => {
-              setQuery("");
-              setFavorites(false);
-            }}
-          >
-            Show all songs
+    <button
+      className={`select-box${selected ? " checked" : ""}`}
+      role="checkbox"
+      aria-checked={selected}
+      aria-label={`Select ${displayTitle(song.request)}`}
+      onClick={(e) => onToggle(song, e.shiftKey)}
+    >
+      {selected && <Check size={13} strokeWidth={3} />}
+    </button>
+  );
+}
+
+export default function SongList(props: SongListProps) {
+  const {
+    groups,
+    layout,
+    current,
+    playing,
+    progress,
+    selected,
+    renaming,
+    onToggleSelect,
+    onRenamed,
+    onPlay,
+    onSeek,
+    onOpen,
+    onFavorite,
+    onCancel,
+    onRetry,
+    actions,
+    targetsFor,
+  } = props;
+  const selecting = selected.size > 0;
+
+  const title = (song: Song) =>
+    renaming === song.id ? (
+      <input
+        className="rename"
+        aria-label="New song title"
+        defaultValue={displayTitle(song.request)}
+        maxLength={120}
+        autoFocus
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.currentTarget.blur();
+          if (e.key === "Escape") onRenamed(song, null);
+        }}
+        onBlur={(e) => {
+          const next = e.currentTarget.value.trim();
+          onRenamed(
+            song,
+            next && next !== displayTitle(song.request) ? next : null,
+          );
+        }}
+      />
+    ) : (
+      <button className="song-title" onClick={() => onOpen(song)}>
+        {displayTitle(song.request)}
+      </button>
+    );
+
+  const trailing = (song: Song) => {
+    const name = displayTitle(song.request);
+    const unfinished = song.state === "failed" || song.state === "interrupted";
+    return (
+      <div className="song-actions">
+        {isActive(song) ? (
+          <button className="pill-button" onClick={() => onCancel(song)}>
+            <Square size={12} fill="currentColor" />
+            Stop
           </button>
-        </div>
-      ) : (
-        <div className="song-scroll">
-          {groups.map(([label, items]) => (
-            <section key={label} className="song-group">
-              <h2>{label}</h2>
-              {items.map((song) => {
-                const title = displayTitle(song.request);
-                const active = isActive(song);
-                const unfinished =
-                  song.state === "failed" || song.state === "interrupted";
-                return (
-                  <article
-                    key={song.id}
-                    className={`song-row${current === song.id ? " current" : ""}`}
-                  >
+        ) : unfinished ? (
+          <button className="pill-button" onClick={() => onRetry(song)}>
+            <RotateCcw size={14} />
+            Try again
+          </button>
+        ) : (
+          <button
+            className={`round-button${song.favorite ? " loved" : ""}`}
+            aria-label={song.favorite ? `Unlike ${name}` : `Like ${name}`}
+            aria-pressed={song.favorite}
+            onClick={() => onFavorite(song)}
+          >
+            <Heart size={17} fill={song.favorite ? "currentColor" : "none"} />
+          </button>
+        )}
+        <SongMenu song={song} targets={targetsFor(song)} actions={actions} />
+      </div>
+    );
+  };
+
+  if (layout === "grid")
+    return (
+      <div className="song-scroll">
+        {groups.map(([label, songs]) => (
+          <section key={label || "all"} className="song-group">
+            {label && <h2>{label}</h2>}
+            <div className="song-grid">
+              {songs.map((song) => (
+                <article
+                  key={song.id}
+                  className={`song-card${current === song.id ? " current" : ""}${selected.has(song.id) ? " selected" : ""}`}
+                >
+                  <div className="card-cover">
                     <SongCover
                       song={song}
                       playing={playing}
                       current={current === song.id}
                       onPlay={onPlay}
                     />
-                    <div className="song-text">
-                      {renaming === song.id ? (
-                        <input
-                          className="rename"
-                          aria-label="New song title"
-                          defaultValue={title}
-                          maxLength={120}
-                          autoFocus
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") e.currentTarget.blur();
-                            if (e.key === "Escape") onRenamed(song, null);
-                          }}
-                          onBlur={(e) => {
-                            const next = e.currentTarget.value.trim();
-                            onRenamed(
-                              song,
-                              next && next !== title ? next : null,
-                            );
-                          }}
-                        />
-                      ) : (
-                        <button
-                          className="song-title"
-                          onClick={() => onOpen(song)}
-                        >
-                          {title}
-                        </button>
-                      )}
-                      <p>{song.request.style}</p>
-                      {song.state !== "completed" && (
-                        <span className={`song-status state-${song.state}`}>
-                          {statusLabel(song)}
-                        </span>
-                      )}
-                    </div>
-                    <div className="song-actions">
-                      {active ? (
-                        <button
-                          className="pill-button"
-                          onClick={() => onCancel(song)}
-                        >
-                          <Square size={12} fill="currentColor" />
-                          Stop
-                        </button>
-                      ) : unfinished ? (
-                        <button
-                          className="pill-button"
-                          onClick={() => onRetry(song)}
-                        >
-                          <RotateCcw size={14} />
-                          Try again
-                        </button>
-                      ) : (
-                        <button
-                          className={`round-button${song.favorite ? " loved" : ""}`}
-                          aria-label={
-                            song.favorite ? `Unlike ${title}` : `Like ${title}`
-                          }
-                          aria-pressed={song.favorite}
-                          onClick={() => onFavorite(song)}
-                        >
-                          <Heart
-                            size={17}
-                            fill={song.favorite ? "currentColor" : "none"}
-                          />
-                        </button>
-                      )}
-                      <SongMenu song={song} actions={actions} />
-                    </div>
-                  </article>
-                );
-              })}
-            </section>
-          ))}
-        </div>
-      )}
-    </main>
+                    <SelectBox
+                      song={song}
+                      selected={selected.has(song.id)}
+                      onToggle={onToggleSelect}
+                    />
+                  </div>
+                  <div className="card-text">
+                    {title(song)}
+                    <p>
+                      {song.state === "completed"
+                        ? song.request.style
+                        : statusLabel(song)}
+                    </p>
+                  </div>
+                  {trailing(song)}
+                </article>
+              ))}
+            </div>
+          </section>
+        ))}
+      </div>
+    );
+
+  return (
+    <div className={`song-scroll${selecting ? " selecting" : ""}`}>
+      {groups.map(([label, songs]) => (
+        <section key={label || "all"} className="song-group">
+          {label && <h2>{label}</h2>}
+          {songs.map((song) => {
+            const isCurrent = current === song.id;
+            const playable = song.state === "completed" && !!song.audioPath;
+            return (
+              <article
+                key={song.id}
+                className={`song-row${isCurrent ? " current" : ""}${selected.has(song.id) ? " selected" : ""}`}
+              >
+                <SelectBox
+                  song={song}
+                  selected={selected.has(song.id)}
+                  onToggle={onToggleSelect}
+                />
+                <SongCover
+                  song={song}
+                  playing={playing}
+                  current={isCurrent}
+                  onPlay={onPlay}
+                />
+                <div className="song-text">
+                  {title(song)}
+                  {layout === "waveform" && playable ? (
+                    <Waveform
+                      id={song.id}
+                      progress={isCurrent ? progress : null}
+                      onSeek={(fraction) => onSeek(song, fraction)}
+                    />
+                  ) : (
+                    <p>{song.request.style}</p>
+                  )}
+                  {song.state !== "completed" && (
+                    <span className={`song-status state-${song.state}`}>
+                      {statusLabel(song)}
+                    </span>
+                  )}
+                </div>
+                {trailing(song)}
+              </article>
+            );
+          })}
+        </section>
+      ))}
+    </div>
   );
 }

@@ -5,6 +5,7 @@
 //! at audio. Records are replaced atomically and in-flight works found at startup are
 //! marked interrupted rather than presented as finished.
 use crate::{
+    collections::{Collections, Playlist, Workspace, DEFAULT_WORKSPACE},
     engine, models,
     runner::{send_line, EngineProcess, KeepAwake, Output},
 };
@@ -106,6 +107,13 @@ pub struct Work {
     pub audio_path: Option<String>,
     #[serde(default)]
     pub message: Option<String>,
+    /// The workspace the song belongs to; older records belong to My Workspace.
+    #[serde(default = "default_workspace")]
+    pub workspace: String,
+}
+
+fn default_workspace() -> String {
+    DEFAULT_WORKSPACE.into()
 }
 
 impl Work {
@@ -302,6 +310,7 @@ pub fn finish(work: &mut Work, result: &Result<(), String>, cancelled: bool) {
 struct State {
     loaded: bool,
     works: Vec<Work>,
+    collections: Collections,
     queue: VecDeque<String>,
     /// The work the engine is making now.
     current: Option<String>,
@@ -348,7 +357,14 @@ impl SongService {
         let root = library_root(app)?;
         let mut state = self.0 .0.lock().unwrap();
         if !state.loaded {
-            state.works = load_library(&root);
+            state.collections = Collections::load(&root);
+            let mut works = load_library(&root);
+            for work in &mut works {
+                if !state.collections.has_workspace(&work.workspace) {
+                    work.workspace = DEFAULT_WORKSPACE.into();
+                }
+            }
+            state.works = works;
             state.loaded = true;
         }
         Ok(f(&mut state))
@@ -356,6 +372,11 @@ impl SongService {
 
     fn publish(app: &tauri::AppHandle, work: &Work) {
         let _ = app.emit("song-updated", work);
+    }
+
+    fn publish_collections(app: &tauri::AppHandle, service: &SongService) {
+        let collections = service.0 .0.lock().unwrap().collections.clone();
+        let _ = app.emit("collections-updated", collections);
     }
 
     fn update(&self, app: &tauri::AppHandle, id: &str, persist: bool, f: impl FnOnce(&mut Work)) {
@@ -650,8 +671,13 @@ pub fn create_song(
     app: tauri::AppHandle,
     service: tauri::State<SongService>,
     request: SongRequest,
+    workspace: Option<String>,
 ) -> Result<Work, String> {
     request.validate()?;
+    let workspace = workspace.unwrap_or_else(default_workspace);
+    if !service.with_state(&app, |state| state.collections.has_workspace(&workspace))? {
+        return Err("That workspace no longer exists.".into());
+    }
     if app.state::<engine::EngineCache>().ready().is_none()
         || models::verified_root(&app, &app.state::<models::ModelManager>()).is_none()
     {
@@ -672,6 +698,7 @@ pub fn create_song(
         duration: None,
         audio_path: None,
         message: None,
+        workspace,
     };
     write_record(&root, &work)?;
     service.with_state(&app, |state| {
@@ -894,30 +921,202 @@ pub fn reveal_library(app: tauri::AppHandle) -> Result<(), String> {
         .map_err(|_| "The songs folder could not be opened.".into())
 }
 
-/// Move a song to the computer's trash, so it can still be restored from there.
+/// Move songs to the computer's trash, so they can still be restored from there.
+/// Returns the songs that were moved; any that could not be moved are reported.
 #[tauri::command]
-pub fn trash_song(
+pub fn trash_songs(
+    app: tauri::AppHandle,
+    service: tauri::State<SongService>,
+    ids: Vec<String>,
+) -> Result<Vec<String>, String> {
+    if ids.is_empty() || ids.iter().any(|id| !valid_id(id)) {
+        return Err("Unknown song.".into());
+    }
+    let root = library_root(&app)?;
+    let movable: Vec<String> = service.with_state(&app, |state| {
+        ids.iter()
+            .filter(|id| state.works.iter().any(|w| &w.id == *id && !w.active()))
+            .cloned()
+            .collect()
+    })?;
+    if movable.is_empty() {
+        return Err("Stop these songs before moving them to the Trash.".into());
+    }
+    // The system trash can be slow; keep the library unlocked meanwhile.
+    let moved: Vec<String> = movable
+        .into_iter()
+        .filter(|id| trash::delete(root.join(id)).is_ok())
+        .collect();
+    service.with_state(&app, |state| -> Result<(), String> {
+        state.works.retain(|w| !moved.contains(&w.id));
+        state.collections.forget_songs(&moved);
+        state.collections.save(&root)
+    })??;
+    SongService::publish_collections(&app, &service);
+    if moved.len() < ids.len() {
+        return Err(if moved.is_empty() {
+            "These songs could not be moved to the Trash.".into()
+        } else {
+            format!(
+                "{} of {} songs were moved to the Trash.",
+                moved.len(),
+                ids.len()
+            )
+        });
+    }
+    Ok(moved)
+}
+
+#[tauri::command]
+pub fn list_collections(
+    app: tauri::AppHandle,
+    service: tauri::State<SongService>,
+) -> Result<Collections, String> {
+    service.with_state(&app, |state| state.collections.clone())
+}
+
+/// Apply a change to workspaces or playlists, save it, and tell the interface.
+fn change_collections<T>(
+    app: &tauri::AppHandle,
+    service: &SongService,
+    f: impl FnOnce(&mut Collections) -> Result<T, String>,
+) -> Result<T, String> {
+    let root = library_root(app)?;
+    let result = service.with_state(app, |state| -> Result<T, String> {
+        let mut next = state.collections.clone();
+        let value = f(&mut next)?;
+        next.save(&root)?;
+        state.collections = next;
+        Ok(value)
+    })??;
+    SongService::publish_collections(app, service);
+    Ok(result)
+}
+
+#[tauri::command]
+pub fn create_workspace(
+    app: tauri::AppHandle,
+    service: tauri::State<SongService>,
+    name: String,
+) -> Result<Workspace, String> {
+    change_collections(&app, &service, |c| {
+        c.create_workspace(new_id(), &name, now_ms())
+    })
+}
+
+#[tauri::command]
+pub fn rename_workspace(
+    app: tauri::AppHandle,
+    service: tauri::State<SongService>,
+    id: String,
+    name: String,
+) -> Result<(), String> {
+    change_collections(&app, &service, |c| c.rename_workspace(&id, &name))
+}
+
+#[tauri::command]
+pub fn archive_workspace(
+    app: tauri::AppHandle,
+    service: tauri::State<SongService>,
+    id: String,
+    archived: bool,
+) -> Result<(), String> {
+    change_collections(&app, &service, |c| c.set_archived(&id, archived))
+}
+
+#[tauri::command]
+pub fn move_songs(
+    app: tauri::AppHandle,
+    service: tauri::State<SongService>,
+    ids: Vec<String>,
+    workspace: String,
+) -> Result<(), String> {
+    if !service.with_state(&app, |state| state.collections.has_workspace(&workspace))? {
+        return Err("That workspace no longer exists.".into());
+    }
+    for id in &ids {
+        let target = workspace.clone();
+        service.update(&app, id, true, |work| work.workspace = target);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn create_playlist(
+    app: tauri::AppHandle,
+    service: tauri::State<SongService>,
+    name: String,
+    songs: Vec<String>,
+) -> Result<Playlist, String> {
+    change_collections(&app, &service, |c| {
+        let playlist = c.create_playlist(new_id(), &name, now_ms())?;
+        c.add_to_playlist(&playlist.id, &songs)?;
+        Ok(c.playlists[0].clone())
+    })
+}
+
+#[tauri::command]
+pub fn rename_playlist(
+    app: tauri::AppHandle,
+    service: tauri::State<SongService>,
+    id: String,
+    name: String,
+) -> Result<(), String> {
+    change_collections(&app, &service, |c| c.rename_playlist(&id, &name))
+}
+
+#[tauri::command]
+pub fn delete_playlist(
     app: tauri::AppHandle,
     service: tauri::State<SongService>,
     id: String,
 ) -> Result<(), String> {
-    if !valid_id(&id) {
-        return Err("Unknown song.".into());
-    }
-    let root = library_root(&app)?;
-    service.with_state(&app, |state| {
-        match state.works.iter().find(|w| w.id == id) {
-            None => Err("Unknown song.".to_string()),
-            Some(work) if work.active() => {
-                Err("Stop this song before moving it to the Trash.".to_string())
-            }
-            Some(_) => Ok(()),
+    change_collections(&app, &service, |c| c.delete_playlist(&id))
+}
+
+#[tauri::command]
+pub fn add_to_playlist(
+    app: tauri::AppHandle,
+    service: tauri::State<SongService>,
+    id: String,
+    songs: Vec<String>,
+) -> Result<usize, String> {
+    change_collections(&app, &service, |c| c.add_to_playlist(&id, &songs))
+}
+
+#[tauri::command]
+pub fn remove_from_playlist(
+    app: tauri::AppHandle,
+    service: tauri::State<SongService>,
+    id: String,
+    songs: Vec<String>,
+) -> Result<(), String> {
+    change_collections(&app, &service, |c| c.remove_from_playlist(&id, &songs))
+}
+
+/// Loudness peaks for drawing a finished song's waveform, cached beside its audio.
+#[tauri::command]
+pub async fn song_waveform(
+    app: tauri::AppHandle,
+    service: tauri::State<'_, SongService>,
+    id: String,
+) -> Result<Vec<f32>, String> {
+    let audio = finished_audio(&app, &service, &id)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let cache = audio.with_file_name("waveform.json");
+        if let Some(peaks) = fs::read(&cache)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Vec<f32>>(&bytes).ok())
+            .filter(|peaks| peaks.len() == crate::audio::WAVEFORM_BARS)
+        {
+            return Ok(peaks);
         }
-    })??;
-    // The system trash can be slow; keep the library unlocked meanwhile.
-    trash::delete(root.join(&id))
-        .map_err(|_| "This song could not be moved to the Trash.".to_string())?;
-    service.with_state(&app, |state| state.works.retain(|w| w.id != id))
+        let peaks = crate::audio::waveform(&crate::audio::decode_flac(&audio)?);
+        let _ = fs::write(&cache, serde_json::to_vec(&peaks).unwrap_or_default());
+        Ok(peaks)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[cfg(test)]

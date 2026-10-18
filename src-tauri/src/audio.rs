@@ -39,6 +39,31 @@ pub fn decode_flac(path: &Path) -> Result<Pcm, String> {
     })
 }
 
+/// How many bars a waveform has; the interface scales them to its width.
+pub const WAVEFORM_BARS: usize = 160;
+
+/// Peak level per slice of the song, scaled so the loudest slice is 1.0.
+pub fn waveform(pcm: &Pcm) -> Vec<f32> {
+    let channels = pcm.channels.max(1) as usize;
+    let frames = pcm.samples.len() / channels;
+    let mut peaks = vec![0f32; WAVEFORM_BARS];
+    if frames == 0 {
+        return peaks;
+    }
+    for (frame, chunk) in pcm.samples.chunks(channels).enumerate() {
+        let bar = frame * WAVEFORM_BARS / frames;
+        let level = chunk.iter().fold(0f32, |m, s| m.max(s.abs()));
+        peaks[bar] = peaks[bar].max(level);
+    }
+    let loudest = peaks.iter().copied().fold(0f32, f32::max);
+    if loudest > 0.0 {
+        for peak in &mut peaks {
+            *peak = (*peak / loudest * 1000.0).round() / 1000.0;
+        }
+    }
+    peaks
+}
+
 /// 24-bit PCM WAV keeps the model's output precision for editing.
 pub fn write_wav(pcm: &Pcm, path: &Path) -> Result<(), String> {
     let spec = hound::WavSpec {
@@ -144,6 +169,26 @@ mod tests {
         assert_eq!(bytes[2] >> 4, 0b1110);
         // 2 s at 320 kbps is about 80 KB.
         assert!((70_000..95_000).contains(&bytes.len()), "{}", bytes.len());
+    }
+
+    #[test]
+    fn waveform_has_fixed_bars_scaled_to_the_loudest() {
+        let mut pcm = tone(48_000, 1.0);
+        let half = pcm.samples.len() / 2;
+        for s in &mut pcm.samples[..half] {
+            *s *= 0.25;
+        }
+        let bars = waveform(&pcm);
+        assert_eq!(bars.len(), WAVEFORM_BARS);
+        assert_eq!(bars.iter().copied().fold(0f32, f32::max), 1.0);
+        assert!(bars[10] < 0.3 && bars[150] > 0.9);
+        assert!(waveform(&Pcm {
+            sample_rate: 48_000,
+            channels: 2,
+            samples: vec![]
+        })
+        .iter()
+        .all(|b| *b == 0.0));
     }
 
     #[test]

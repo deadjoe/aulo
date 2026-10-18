@@ -14,7 +14,8 @@ Implemented:
 - A Suno-style creation workspace: Simple and Advanced modes, lyrics with section shortcuts, style ideas, voice, weirdness, and style influence. No scores, seeds, engines, or other technical settings are shown.
 - A native song service with a resident engine: the model stays loaded between songs and is released after 10 idle minutes; a queue, stop, a hang watchdog, crash recovery, keep-awake on macOS, and durable works under the application data folder.
 - Suno-style progress: a spinner on the song's cover and "Creating…", with no technical stage names.
-- A library grouped by day with generated cover art, likes and search; song details with lyrics; a song menu with Create another version, Reuse settings, Rename, Download, Show in Finder, Add to queue, and Move to Trash; and a bottom player.
+- Workspaces (with Save to when creating, archiving and renaming) and playlists; multi-select with batch Add to playlist, Add to queue, Move to workspace and Move to Trash, with shortcuts; search, filters, sorting, and List, Waveform and Grid layouts.
+- A library grouped by day with generated cover art and likes; song details with lyrics; a song menu with Create another version, Reuse settings, Rename, Download, Show in Finder, Add to queue, and Move to Trash; and a bottom player.
 - Engine selection is delegated to GROOVE's own rules (PyTorch on Apple Silicon and large NVIDIA cards, the GGUF engine on smaller NVIDIA cards).
 - An independent placeholder for connecting the user's existing AI agent.
 

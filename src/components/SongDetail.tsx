@@ -158,7 +158,7 @@ export default function SongDetail({
                 <Download size={18} />
               </button>
             )}
-            <SongMenu song={song} actions={actions} large />
+            <SongMenu song={song} targets={[song]} actions={actions} large />
           </div>
         </div>
       </div>

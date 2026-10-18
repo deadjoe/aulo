@@ -28,7 +28,36 @@ export interface Song {
   duration: number | null;
   audioPath: string | null;
   message: string | null;
+  workspace: string;
 }
+export const DEFAULT_WORKSPACE = "default";
+export interface Workspace {
+  id: string;
+  name: string;
+  createdMs: number;
+  archived: boolean;
+}
+export interface Playlist {
+  id: string;
+  name: string;
+  createdMs: number;
+  songIds: string[];
+}
+export interface Collections {
+  workspaces: Workspace[];
+  playlists: Playlist[];
+}
+export const EMPTY_COLLECTIONS: Collections = {
+  workspaces: [
+    {
+      id: DEFAULT_WORKSPACE,
+      name: "My Workspace",
+      createdMs: 0,
+      archived: false,
+    },
+  ],
+  playlists: [],
+};
 export interface CreationStatus {
   ready: boolean;
   blocker: "models" | "engine" | "unsupported" | "ready" | "preview";
@@ -48,14 +77,46 @@ export async function creationStatus(): Promise<CreationStatus> {
 }
 export const listSongs = () =>
   isTauri() ? invoke<Song[]>("list_songs") : Promise.resolve([] as Song[]);
-export const createSong = (request: SongRequest) =>
-  invoke<Song>("create_song", { request });
+export const createSong = (request: SongRequest, workspace: string) =>
+  invoke<Song>("create_song", { request, workspace });
 export const cancelSong = (id: string) => invoke<void>("cancel_song", { id });
 export const updateSong = (
   id: string,
   changes: { title?: string; favorite?: boolean },
 ) => invoke<void>("update_song", { id, ...changes });
-export const trashSong = (id: string) => invoke<void>("trash_song", { id });
+export const trashSongs = (ids: string[]) =>
+  invoke<string[]>("trash_songs", { ids });
+export const listCollections = () =>
+  isTauri()
+    ? invoke<Collections>("list_collections")
+    : Promise.resolve(EMPTY_COLLECTIONS);
+export function onCollectionsUpdated(handler: (c: Collections) => void) {
+  if (!isTauri()) return () => {};
+  const stop = listen<Collections>("collections-updated", (e) =>
+    handler(e.payload),
+  );
+  return () => void stop.then((unlisten) => unlisten());
+}
+export const createWorkspace = (name: string) =>
+  invoke<Workspace>("create_workspace", { name });
+export const renameWorkspace = (id: string, name: string) =>
+  invoke<void>("rename_workspace", { id, name });
+export const archiveWorkspace = (id: string, archived: boolean) =>
+  invoke<void>("archive_workspace", { id, archived });
+export const moveSongs = (ids: string[], workspace: string) =>
+  invoke<void>("move_songs", { ids, workspace });
+export const createPlaylist = (name: string, songs: string[]) =>
+  invoke<Playlist>("create_playlist", { name, songs });
+export const renamePlaylist = (id: string, name: string) =>
+  invoke<void>("rename_playlist", { id, name });
+export const deletePlaylist = (id: string) =>
+  invoke<void>("delete_playlist", { id });
+export const addToPlaylist = (id: string, songs: string[]) =>
+  invoke<number>("add_to_playlist", { id, songs });
+export const removeFromPlaylist = (id: string, songs: string[]) =>
+  invoke<void>("remove_from_playlist", { id, songs });
+export const songWaveform = (id: string) =>
+  invoke<number[]>("song_waveform", { id });
 export type AudioFormat = "m4a" | "mp3" | "wav" | "flac";
 export const exportSong = (
   id: string,

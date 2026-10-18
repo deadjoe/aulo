@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  CornerDownRight,
   Download,
   FolderOpen,
+  ListMinus,
   ListPlus,
+  ListVideo,
   MoreHorizontal,
   Pencil,
   RotateCcw,
@@ -10,6 +13,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { displayTitle, isActive, type Song } from "../lib/songs";
+import { useFloating } from "../lib/floating";
 
 export interface SongActions {
   onAnotherVersion: (song: Song) => void;
@@ -17,26 +21,47 @@ export interface SongActions {
   onRename: (song: Song) => void;
   onDownload: (song: Song) => void;
   onReveal: (song: Song) => void;
-  onQueue: (song: Song) => void;
-  onTrash: (song: Song) => void;
+  onPlaylist: (songs: Song[]) => void;
+  onQueue: (songs: Song[]) => void;
+  onMove: (songs: Song[]) => void;
+  onTrash: (songs: Song[]) => void;
+  /** Present only while looking at a playlist. */
+  onRemoveFromPlaylist?: (songs: Song[]) => void;
 }
 
+const isMac =
+  typeof navigator !== "undefined" && /Mac/i.test(navigator.userAgent);
 const revealLabel =
   typeof navigator !== "undefined" && /Windows/i.test(navigator.userAgent)
     ? "Show in File Explorer"
     : "Show in Finder";
+export const SHORTCUTS = {
+  playlist: isMac ? "⌘P" : "Ctrl+P",
+  queue: isMac ? "⌘U" : "Ctrl+U",
+  move: isMac ? "⌘S" : "Ctrl+S",
+  trash: isMac ? "⌘⌫" : "Ctrl+Del",
+};
 
+const finished = (s: Song) => s.state === "completed" && !!s.audioPath;
+
+/**
+ * A song's menu. When the song is part of a multi-song selection, the menu
+ * acts on all selected songs and offers only what applies to several at once.
+ */
 export default function SongMenu({
   song,
+  targets,
   actions,
   large = false,
 }: {
   song: Song;
+  targets: Song[];
   actions: SongActions;
   large?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const floating = useFloating(open, ref);
   useEffect(() => {
     if (!open) return;
     const close = (e: MouseEvent | KeyboardEvent) => {
@@ -55,11 +80,14 @@ export default function SongMenu({
     };
   }, [open]);
   const title = displayTitle(song.request);
-  const finished = song.state === "completed" && !!song.audioPath;
+  const many = targets.length > 1;
+  const playable = targets.filter(finished);
+  const removable = targets.filter((s) => !isActive(s));
   const item = (
     label: string,
     icon: React.ReactNode,
-    action: (song: Song) => void,
+    run: () => void,
+    shortcut?: string,
     className = "",
   ) => (
     <button
@@ -67,11 +95,12 @@ export default function SongMenu({
       className={className}
       onClick={() => {
         setOpen(false);
-        action(song);
+        run();
       }}
     >
       {icon}
-      {label}
+      <span className="menu-label">{label}</span>
+      {shortcut && <kbd>{shortcut}</kbd>}
     </button>
   );
   return (
@@ -86,33 +115,71 @@ export default function SongMenu({
         <MoreHorizontal size={18} />
       </button>
       {open && (
-        <div className="menu" role="menu">
-          {item(
-            "Create another version",
-            <RotateCcw size={16} />,
-            actions.onAnotherVersion,
+        <div className="menu" role="menu" style={floating}>
+          {many && (
+            <p className="menu-heading">{targets.length} songs selected</p>
           )}
-          {item(
-            "Reuse settings",
-            <SlidersHorizontal size={16} />,
-            actions.onReuse,
+          {!many && (
+            <>
+              {item("Create another version", <RotateCcw size={16} />, () =>
+                actions.onAnotherVersion(song),
+              )}
+              {item("Reuse settings", <SlidersHorizontal size={16} />, () =>
+                actions.onReuse(song),
+              )}
+              {item("Rename", <Pencil size={16} />, () =>
+                actions.onRename(song),
+              )}
+              <hr />
+            </>
           )}
-          {item("Rename", <Pencil size={16} />, actions.onRename)}
-          {finished && <hr />}
-          {finished &&
-            item("Download", <Download size={16} />, actions.onDownload)}
-          {finished &&
-            item(revealLabel, <FolderOpen size={16} />, actions.onReveal)}
-          {finished &&
-            item("Add to queue", <ListPlus size={16} />, actions.onQueue)}
-          {!isActive(song) && <hr />}
-          {!isActive(song) &&
+          {playable.length > 0 &&
             item(
-              "Move to Trash",
-              <Trash2 size={16} />,
-              actions.onTrash,
-              "danger",
+              "Add to playlist",
+              <ListPlus size={16} />,
+              () => actions.onPlaylist(playable),
+              SHORTCUTS.playlist,
             )}
+          {playable.length > 0 &&
+            item(
+              "Add to queue",
+              <ListVideo size={16} />,
+              () => actions.onQueue(playable),
+              SHORTCUTS.queue,
+            )}
+          {item(
+            "Move to workspace",
+            <CornerDownRight size={16} />,
+            () => actions.onMove(targets),
+            SHORTCUTS.move,
+          )}
+          {actions.onRemoveFromPlaylist &&
+            item("Remove from playlist", <ListMinus size={16} />, () =>
+              actions.onRemoveFromPlaylist!(targets),
+            )}
+          {!many && finished(song) && (
+            <>
+              <hr />
+              {item("Download", <Download size={16} />, () =>
+                actions.onDownload(song),
+              )}
+              {item(revealLabel, <FolderOpen size={16} />, () =>
+                actions.onReveal(song),
+              )}
+            </>
+          )}
+          {removable.length > 0 && (
+            <>
+              <hr />
+              {item(
+                "Move to Trash",
+                <Trash2 size={16} />,
+                () => actions.onTrash(removable),
+                SHORTCUTS.trash,
+                "danger",
+              )}
+            </>
+          )}
         </div>
       )}
     </div>

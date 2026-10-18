@@ -26,7 +26,12 @@ vi.mock("./lib/songs", async (importOriginal) => {
     createSong: vi.fn(),
     cancelSong: vi.fn().mockResolvedValue(undefined),
     updateSong: vi.fn().mockResolvedValue(undefined),
-    trashSong: vi.fn().mockResolvedValue(undefined),
+    trashSongs: vi.fn((ids: string[]) => Promise.resolve(ids)),
+    listCollections: vi.fn(actual.listCollections),
+    moveSongs: vi.fn().mockResolvedValue(undefined),
+    addToPlaylist: vi.fn().mockResolvedValue(1),
+    createWorkspace: vi.fn(),
+    createPlaylist: vi.fn(),
     exportSong: vi.fn().mockResolvedValue(undefined),
     revealSong: vi.fn().mockResolvedValue(undefined),
     audioUrl: vi.fn(() => "blob:audio"),
@@ -53,6 +58,7 @@ const song = (overrides: Partial<Song> = {}): Song => ({
   duration: 154,
   audioPath: "/library/x/audio.flac",
   message: null,
+  workspace: "default",
   ...overrides,
 });
 
@@ -147,6 +153,7 @@ describe("create panel", () => {
     await user.click(create);
     expect(songs.createSong).toHaveBeenCalledWith(
       expect.objectContaining({ style: "lofi", lyrics: "Morning light" }),
+      "default",
     );
     expect(
       await screen.findByRole("img", { name: "Waiting to start…" }),
@@ -196,18 +203,22 @@ describe("library", () => {
       "Create another version",
       "Reuse settings",
       "Rename",
+      "Add to playlistCtrl+P",
+      "Add to queueCtrl+U",
+      "Move to workspaceCtrl+S",
       "Download",
       "Show in Finder",
-      "Add to queue",
-      "Move to Trash",
+      "Move to TrashCtrl+Del",
     ]);
     await user.click(
-      within(menu).getByRole("menuitem", { name: "Move to Trash" }),
+      within(menu).getByRole("menuitem", { name: /Move to Trash/ }),
     );
-    expect(songs.trashSong).toHaveBeenCalledWith(
+    expect(songs.trashSongs).toHaveBeenCalledWith([
       "0123456789abcdef0123456789abcdef",
-    );
-    expect(await screen.findByText("Moved to the Trash.")).toBeVisible();
+    ]);
+    expect(
+      await screen.findByText("Moved “Sunday” to the Trash."),
+    ).toBeVisible();
   });
 
   it("opens a song's details with its lyrics and makes another version", async () => {
@@ -233,9 +244,10 @@ describe("library", () => {
     );
     expect(songs.createSong).toHaveBeenCalledWith(
       expect.objectContaining({ title: "Sunday", style: "dreamy indie pop" }),
+      "default",
     );
     await user.click(screen.getByRole("button", { name: "Back" }));
-    expect(screen.getByRole("heading", { name: "My workspace" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Workspaces" })).toBeVisible();
   });
 
   it("downloads in the chosen format and remembers it", async () => {
@@ -263,6 +275,80 @@ describe("library", () => {
     );
     expect(await screen.findByText("Downloaded.")).toBeVisible();
     expect(localStorage.getItem("aulo.download-format.v1")).toBe("wav");
+  });
+
+  it("selects several songs and acts on all of them", async () => {
+    const two = song({
+      id: "fedcba9876543210fedcba9876543210",
+      request: { ...song().request, title: "Monday" },
+    });
+    vi.mocked(songs.listSongs).mockResolvedValue([
+      song({ request: { ...song().request, title: "Sunday" } }),
+      two,
+    ]);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(
+      await screen.findByRole("checkbox", { name: "Select Sunday" }),
+    );
+    await user.click(screen.getByRole("checkbox", { name: "Select Monday" }));
+    const bar = screen.getByRole("toolbar", { name: "Selected songs" });
+    expect(within(bar).getByText("2 selected")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "More for Monday" }));
+    expect(screen.getByText("2 songs selected")).toBeVisible();
+    expect(
+      screen.queryByRole("menuitem", { name: /Rename/ }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "More for Monday" }));
+    await user.keyboard("{Control>}{Delete}{/Control}");
+    expect(songs.trashSongs).toHaveBeenCalledWith([
+      "0123456789abcdef0123456789abcdef",
+      "fedcba9876543210fedcba9876543210",
+    ]);
+    expect(
+      await screen.findByText("Moved 2 songs to the Trash."),
+    ).toBeVisible();
+  });
+
+  it("moves songs to another workspace and filters the list", async () => {
+    vi.mocked(songs.listCollections).mockResolvedValue({
+      workspaces: [
+        { id: "default", name: "My Workspace", createdMs: 0, archived: false },
+        { id: "rock", name: "Rock", createdMs: 1, archived: false },
+      ],
+      playlists: [],
+    });
+    vi.mocked(songs.listSongs).mockResolvedValue([
+      song({ request: { ...song().request, title: "Sunday" } }),
+      song({
+        id: "fedcba9876543210fedcba9876543210",
+        favorite: true,
+        request: { ...song().request, title: "Monday", instrumental: true },
+      }),
+    ]);
+    const user = userEvent.setup();
+    render(<App />);
+    expect(
+      await screen.findByRole("navigation", { name: "Workspace" }),
+    ).toHaveTextContent("My Workspace");
+    await user.click(screen.getByRole("button", { name: /^Liked$/ }));
+    expect(screen.queryByText("Sunday")).not.toBeInTheDocument();
+    expect(screen.getByText("1 song")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Reset filters" }));
+    expect(screen.getByText("2 songs")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "More for Sunday" }));
+    await user.click(
+      screen.getByRole("menuitem", { name: /Move to workspace/ }),
+    );
+    await user.click(screen.getByRole("button", { name: /Rock/ }));
+    expect(songs.moveSongs).toHaveBeenCalledWith(
+      ["0123456789abcdef0123456789abcdef"],
+      "rock",
+    );
+    await user.click(screen.getByRole("button", { name: "Workspaces" }));
+    expect(screen.getByText("Create new workspace")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: /^Rock/ }));
+    expect(screen.getByText("Rock is empty")).toBeVisible();
   });
 
   it("titles untitled songs from their first sung line", () => {
