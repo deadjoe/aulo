@@ -29,7 +29,6 @@ import Player, { usePlayer } from "./components/Player";
 import { Brand } from "./components/Brand";
 import { EMPTY_REQUEST, loadComposer, saveComposer } from "./lib/composer";
 import { useLibrary, useMessage } from "./lib/useLibrary";
-import { loadHistory, recordPlay, saveHistory } from "./lib/history";
 import {
   addToPlaylist,
   archiveWorkspace,
@@ -120,7 +119,7 @@ export default function App() {
   const [libraryWorkspace, setLibraryWorkspace] = useState<string | null>(null);
   const [showTrash, setShowTrash] = useState(false);
   const [confirming, setConfirming] = useState<Confirmation | null>(null);
-  const [history, setHistory] = useState(loadHistory);
+
   const [playlistId, setPlaylistId] = useState<string | null>(null);
   const [picker, setPicker] = useState<Picker | null>(null);
   const liveWorkspaces = collections.workspaces.filter((w) => !w.archived);
@@ -139,15 +138,7 @@ export default function App() {
   const [renaming, setRenaming] = useState<string | null>(null);
   const [downloading, setDownloading] = useState<Song | null>(null);
   const player = usePlayer(songs);
-  useEffect(() => {
-    const id = player.current?.id;
-    if (!id) return;
-    setHistory((h) => {
-      const next = recordPlay(h, id);
-      saveHistory(next);
-      return next;
-    });
-  }, [player.current?.id]);
+
   const openSong = songs.find((s) => s.id === openId) ?? null;
 
   const refreshStatus = useCallback(() => {
@@ -524,9 +515,8 @@ export default function App() {
           songs={
             libraryTab === "songs"
               ? songs
-              : songsIn(history.map((p) => p.id)).filter(
-                  (s) => s.state === "completed",
-                )
+              : // Every song made, newest first, including ones that didn't finish.
+                [...songs].sort((a, b) => b.createdMs - a.createdMs)
           }
           viewKey={libraryTab === "songs" ? "library" : "history"}
           header={libraryHead}
@@ -534,12 +524,12 @@ export default function App() {
           emptyTitle={
             libraryTab === "songs"
               ? "Your songs will live here"
-              : "Nothing played yet"
+              : "Nothing created yet"
           }
           emptyText={
             libraryTab === "songs"
               ? "Every song you make appears in your library."
-              : "Songs you listen to show up here, most recent first."
+              : "Every song you create shows up here, newest first."
           }
           emptyAction={libraryTab === "songs" ? createButton : undefined}
           actions={actions}

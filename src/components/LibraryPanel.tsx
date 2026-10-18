@@ -55,7 +55,7 @@ export default function LibraryPanel({
   emptyText: string;
   emptyAction?: ReactNode;
   actions: SongActions;
-  /** Keep the given order (for History) instead of sorting. */
+  /** Keep the given newest-first order (History) instead of offering sorting. */
   ordered?: boolean;
   list: Omit<
     SongListProps,

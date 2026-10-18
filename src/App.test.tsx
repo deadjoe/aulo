@@ -449,6 +449,33 @@ describe("library", () => {
     );
   });
 
+  it("shows every created song in History, newest first", async () => {
+    vi.mocked(songs.listSongs).mockResolvedValue([
+      song({
+        createdMs: 1000,
+        request: { ...song().request, title: "Oldest" },
+      }),
+      song({
+        id: "fedcba9876543210fedcba9876543210",
+        createdMs: 3000,
+        state: "failed",
+        duration: null,
+        audioPath: null,
+        message: "This song could not be finished.",
+        request: { ...song().request, title: "Newest" },
+      }),
+    ]);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: /^Library/ }));
+    await user.click(screen.getByRole("tab", { name: "History" }));
+    const titles = screen
+      .getAllByRole("button")
+      .filter((b) => b.className === "song-title")
+      .map((b) => b.textContent);
+    expect(titles).toEqual(["Newest", "Oldest"]);
+  });
+
   it("titles untitled songs from their first sung line", () => {
     expect(songs.displayTitle(song().request)).toBe(
       "Morning light on the window",
