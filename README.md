@@ -4,24 +4,20 @@ Your music, your space. A local music creation app for macOS and Windows, powere
 
 ## Status
 
-**0.1 desktop foundation with real model preparation.** This is not a music-generation release.
+**0.2 creation workspace.** Aulo can create, play, and keep songs on a computer where the music engine is installed. The engine runtime is not yet packaged with the app, so on a clean computer the Create button stays disabled and says why.
 
 Implemented:
 
 - Tauri 2 desktop shell with React and TypeScript.
-- First-run welcome, automatic hardware inspection, and music-essentials setup screens.
-- Native memory, processor, and available-storage inspection; bounded NVIDIA detection on Windows.
-- Explicit browser fallback: hardware is unknown, never fabricated.
-- Pinned official model downloads with byte-level progress, pause/resume, bounded retries, storage checks, and SHA-256 verification.
-- Read-only verification of an existing folder containing `YuE2-3B/` and `YuE2-Vae/`; successful locations are saved for reuse.
-- Restart recovery that preserves partial downloads but requires model revalidation.
-- A workspace status badge for background model preparation.
-- A private engine bridge with offline version/accelerator inspection and a native Settings status check.
-- A developer-only generation path that delegates to the installed GROOVE adapter; desktop generation remains gated.
-- A creative workspace with locally saved drafts, search, favorites, variations, JSON export, and optional details.
+- First-run welcome, automatic hardware inspection, and music-model setup screens.
+- Pinned official model downloads with byte-level progress, pause/resume, bounded retries, storage checks, and SHA-256 verification. Verified models stay ready across restarts while their files are unchanged.
+- A Suno-style creation workspace: Simple and Advanced modes, lyrics with section shortcuts, style ideas, voice, weirdness, and style influence. No scores, seeds, engines, or other technical settings are shown.
+- A native song service: one song at a time, a queue, real engine stages and render progress, stop, durable works under the application data folder, and recovery of songs interrupted by quitting.
+- A library grouped by day with generated cover art, likes, search, rename, reuse settings, and delete, plus a bottom player for finished songs.
+- Engine selection is delegated to GROOVE's own rules (PyTorch on Apple Silicon and large NVIDIA cards, the GGUF engine on smaller NVIDIA cards).
 - An independent placeholder for connecting the user's existing AI agent.
 
-Not implemented: packaged inference runtime, desktop generation/playback, cover/edit integration, agent connection, signed installers, or automatic updates. Windows hardware behavior is implemented but still requires physical-device validation. Eligibility recommendations are not runtime compatibility guarantees. See the [engine integration boundary](docs/ENGINE.md) for development-only capabilities and remaining gates.
+Not implemented: packaged inference runtime and installer, cover/edit integration, agent connection, signed installers, or automatic updates. Windows behavior compiles and is unit-tested but needs physical-device validation. See the [engine integration boundary](docs/ENGINE.md).
 
 ## Development
 
@@ -59,7 +55,15 @@ Production distribution requires signing, notarization where applicable, and pla
 
 The bundled manifest pins 17 files from the official YuE2 repositories, totaling 7,794,565,436 bytes (7.79 GB). Model weights use CC BY-NC 4.0; the wizard links to the model license before download. Models are stored in the application data directory, outside the app bundle. Existing model folders are never rewritten. The supported import layout is a parent folder containing `YuE2-3B/` and `YuE2-Vae/` matching the manifest; GGUF-only folders and arbitrary cache layouts are not yet supported.
 
-Model preparation is useful groundwork, but **verified models do not make generation available**. No inference runtime is bundled or installed by this version. Full multi-GB transfer and clean-machine runtime compatibility remain validation gates; automated tests use small local fixtures and an explicit pinned 959-byte live download.
+Verified models are one of two creation requirements; the other is a working music engine with a supported accelerator. No inference runtime is bundled or installed by this version. Full multi-GB transfer and clean-machine runtime compatibility remain validation gates; automated tests use small local fixtures and an explicit pinned 959-byte live download.
+
+For development, point a debug build at an existing GROOVE 1.0.10 environment:
+
+```sh
+AULO_DEV_PYTHON=/absolute/path/to/yue2_groove/.venv/bin/python npm run desktop
+```
+
+Release builds ignore this variable.
 
 ## Product boundaries
 
@@ -67,7 +71,7 @@ Aulo owns the desktop experience, packaging, maintenance, and integration layer.
 
 Users should not need to understand inference backends, Python environments, GPU parameters, or model file formats. Existing capabilities do not all need visible controls.
 
-Drafts currently live in versioned local storage for this app/browser profile. Browser and native profiles are separate. Clearing site/app data deletes these drafts; export important ideas as JSON. The production library will use durable application-managed storage. Leaving onboarding only records that the workspace was explored, not that setup succeeded.
+Songs live in `<app-data>/library/<id>/`, each with an `aulo.json` record next to the engine's own artifacts. Unsent text in the create panel is remembered per app profile. Leaving onboarding only records that the workspace was explored, not that setup succeeded. Ideas saved by the 0.1 draft workspace remain in that profile's local storage but are no longer shown.
 
 All repository documentation, comments, commit messages, and pull-request text must be in English.
 

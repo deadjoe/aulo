@@ -1,5 +1,15 @@
 # Validation record
 
+## Creation workspace increment — 2026-10-18
+
+- `npm run check`: 23 frontend/component tests and the production build.
+- `python3 -m unittest discover -s runtime/tests`: 13 bridge tests with mocked engine modules (control mapping, GROOVE backend delegation, GGUF opening, cancellation, protocol bounds).
+- `cargo test --locked`: 27 native tests (song records, startup reconciliation, event handling, process streaming, verified-model persistence), plus opt-in live tests.
+- Visual review of the create panel, advanced options, library states and player in a browser preview at 1440×900 and 1000×720, using temporary local fixtures that were not committed. The native window was not exercised by hand.
+  - Opt-in live test `live_generation_produces_playable_audio` (64 GiB Apple Silicon, MPS, GROOVE 1.0.10 development interpreter, the existing local model folder): the Rust runner launched the compiled-in bridge, received preparing, writing, performing, all 32 rendering steps, mixing and saving events, and a `completed` event. The song took 274.75 seconds and produced 69.6 seconds of 48 kHz stereo FLAC; full decoding found finite samples (peak 0.999, RMS 0.149). SHA-256 `943019889f56ff94db9ab81ad8e21febf41726a174ebe1821c32cb6c51e819e1`. The engine chose PyTorch on MPS through GROOVE's rule; CFG 1.5 and 32 ODE steps were used. One smoke test, not a benchmark or listening review.
+- Opt-in live test `live_cancellation_stops_the_engine`: sending `cancel` when the performing stage began produced a `cancelled` event, a `cancelled` pending marker and no audio; the whole run including model loading took 29.8 seconds.
+- Not covered: a clean-machine runtime install, the GGUF path through Aulo, Windows devices, and the full native window flow by hand (create, play, restart recovery).
+
 ## Engine bridge increment — 2026-10-18
 
 - `npm run check`: passed; 20 frontend/component tests and the production build.
@@ -28,7 +38,7 @@ Desktop generation, cancellation, durable library indexing, playback and private
 
 ## Interaction and recovery coverage
 
-Component tests exercise the first-run flow, unknown browser hardware, model preparation availability, explicit download consent, native license-link delegation, insufficient storage, existing-folder verification, actionable verification failure, pause/resume state, unavailable generation, local draft workflows, and agent-dialog keyboard behavior.
+Component tests exercise the first-run flow, unknown browser hardware, model preparation availability, explicit download consent, native license-link delegation, insufficient storage, existing-folder verification, actionable verification failure, pause/resume state, creation readiness, simple and advanced controls, library progress, stop, like and delete, and agent-dialog keyboard behavior.
 
 Native tests exercise actual host hardware inspection, the frontend JSON contract, pinned manifest validation, same-size corrupt files, read-only imports, partial-download resume, servers ignoring ranges, invalid range responses, checksum failures, pause preservation, process locking, symlink rejection for managed downloads, atomic saved-location replacement, restart recovery, and revalidation after saved success.
 
@@ -55,5 +65,5 @@ The foundation commit `3e6e25f` passed frontend, macOS native, and Windows nativ
 4. On a test machine, explicitly start a managed download, pause/resume it, and restart the app during transfer.
 5. Confirm partial files recover, a saved success returns as unverified after restart, and generation stays disabled.
 6. Leave the wizard during preparation and confirm the workspace badge shows current progress and reopens model preparation.
-7. Exercise drafts, favorites, search, variations, and export; confirm saved drafts survive restart.
+7. Create a song, stop another, like, rename, reuse settings, delete; confirm finished songs survive restart and play.
 8. Verify the UI at default/minimum sizes and with keyboard navigation.

@@ -1,5 +1,6 @@
 mod engine;
 mod models;
+mod songs;
 use serde::Serialize;
 use sysinfo::{Disks, System};
 use tauri::Manager;
@@ -114,6 +115,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(models::ModelManager::default())
+        .manage(engine::EngineCache::default())
+        .manage(songs::SongService::default())
         .invoke_handler(tauri::generate_handler![
             inspect_hardware,
             engine::engine_status,
@@ -122,7 +125,13 @@ pub fn run() {
             models::download_models,
             models::verify_models,
             models::pause_models,
-            models::open_model_license
+            models::open_model_license,
+            songs::creation_status,
+            songs::list_songs,
+            songs::create_song,
+            songs::cancel_song,
+            songs::update_song,
+            songs::delete_song
         ])
         .run(tauri::generate_context!())
         .expect("Failed to start Aulo");

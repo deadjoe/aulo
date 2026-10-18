@@ -4,12 +4,13 @@
 
 ```text
 React interface
-  Setup guide / composer / draft library / settings
+  Setup guide / create panel / library / player / settings
         |
         +-- Tauri commands: hardware inspection / model preparation / engine probe
+        +-- Song service: queue / progress events / works / cancel
         |       +-- Private Python bridge -- installed GROOVE adapter
+        +-- Asset protocol: library/*/audio.flac (playback only)
         +-- Native dialog: user-selected folder
-        +-- Local draft storage (preview only)
 
 Future integration boundary
   Desktop interface      Agent adapter
@@ -20,11 +21,11 @@ Future integration boundary
                               YuE2 / GGUF
 ```
 
-`src/lib/core.ts` defines the application-facing contract and native engine inspection. The private process bridge now checks a real installed engine and provides a developer generation path through the existing adapter. Desktop generation remains unavailable; the job service and runtime distribution are not implemented. See [engine integration](ENGINE.md).
+`src/lib/songs.ts` is the UI's contract with the native song service, and `src/lib/core.ts` covers engine inspection. The service runs one song at a time through the private bridge and emits `song-updated` events. Runtime distribution is not implemented. See [engine integration](ENGINE.md).
 
 `src/lib/hardware.ts` separates native observations from provisional eligibility. Native inspection performs no downloads, model loading, or environment modification. On Windows, `nvidia-smi` has a five-second timeout; memory from multiple devices is never summed. Failure to detect a GPU means unknown rather than a CPU fallback.
 
-`src/lib/storage.ts` provides versioned, validated draft persistence. Production work storage must move to a durable application-owned library with migration, atomic writes, and backup/recovery policies before promising durable audio projects.
+Works are stored in an application-owned library with atomic record writes and startup reconciliation. Backup and migration policies remain future work.
 
 ## Model preparation
 
@@ -54,6 +55,6 @@ Reserved as an independent integration. A later settings flow may connect an exi
 
 ## Visual direction
 
-A quiet graphite and olive workspace with warm peach actions, native system typography, and an original waveform mark. The layout borrows the useful creation/list/player arrangement from the provided references while excluding social feeds, credits, subscriptions, and public-sharing controls.
+A quiet graphite workspace with warm peach actions and native system typography. The layout follows Suno's logged-in Create page (navigation, create panel, library, bottom player) while excluding social feeds, credits, subscriptions, and public-sharing controls. Each song gets generated cover art derived from its identifier and the moods named in its style; it is the one expressive element, and it animates only while that song is being made.
 
-The workspace starts honestly empty. It contains no seeded fake songs or fake playback progress. The desktop title bar remains native. Details are dismissible; at narrower widths they become an overlay. Reduced-motion and keyboard users are supported.
+The workspace starts honestly empty. It contains no seeded songs or simulated progress. The desktop title bar remains native. Below 1100 px the navigation collapses to icons; below 820 px the create panel stacks above the library. Reduced-motion and keyboard users are supported.

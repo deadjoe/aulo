@@ -162,12 +162,63 @@ impl Drop for BusyGuard {
 struct SavedModels {
     manifest_id: String,
     model_root: PathBuf,
+    /// Size and modification time of every file when its checksum last passed.
+    #[serde(default)]
+    verified_files: Vec<FileStamp>,
 }
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FileStamp {
+    path: String,
+    bytes: u64,
+    modified_nanos: u128,
+}
+fn stamp(root: &Path, file: &ModelFile) -> Option<FileStamp> {
+    let metadata = fs::metadata(root.join(&file.path)).ok()?;
+    let modified = metadata.modified().ok()?;
+    let nanos = modified
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_nanos();
+    (metadata.is_file() && metadata.len() == file.bytes).then(|| FileStamp {
+        path: file.path.clone(),
+        bytes: metadata.len(),
+        modified_nanos: nanos,
+    })
+}
+/// Unchanged files keep a checksum verification across restarts. Any size or
+/// modification-time difference requires a full checksum pass again.
+fn unchanged_since_verification(root: &Path, m: &Manifest, saved: &[FileStamp]) -> bool {
+    saved.len() == m.files.len()
+        && m.files
+            .iter()
+            .zip(saved)
+            .all(|(file, recorded)| stamp(root, file).as_ref() == Some(recorded))
+}
+fn save_verified(base: &Path, root: &Path, m: &Manifest) -> Result<(), String> {
+    let stamps = m
+        .files
+        .iter()
+        .map(|file| stamp(root, file))
+        .collect::<Option<Vec<_>>>()
+        .ok_or("A model file changed during verification. Please verify again.")?;
+    write_selection(base, root, &m.id, stamps)
+}
+#[cfg(test)]
 fn save_selection(base: &Path, root: &Path, manifest_id: &str) -> Result<(), String> {
+    write_selection(base, root, manifest_id, Vec::new())
+}
+fn write_selection(
+    base: &Path,
+    root: &Path,
+    manifest_id: &str,
+    verified_files: Vec<FileStamp>,
+) -> Result<(), String> {
     fs::create_dir_all(base).map_err(io_error)?;
     let saved = SavedModels {
         manifest_id: manifest_id.into(),
         model_root: root.to_path_buf(),
+        verified_files,
     };
     let mut tmp = tempfile::NamedTempFile::new_in(base).map_err(io_error)?;
     serde_json::to_writer(&mut tmp, &saved).map_err(|e| e.to_string())?;
@@ -261,6 +312,18 @@ pub async fn model_plan(app: tauri::AppHandle) -> Result<ModelPlan, String> {
     .await
     .map_err(|e| e.to_string())?
 }
+/// The verified model folder, if model preparation has completed for this manifest.
+pub fn verified_root(app: &tauri::AppHandle, manager: &ModelManager) -> Option<PathBuf> {
+    let mut state = manager.0.status.lock().unwrap();
+    if state.is_none() {
+        let m = manifest().ok()?;
+        *state = Some(restore_status(&base_path(app).ok()?, &m));
+    }
+    let status = state.as_ref()?;
+    (status.models_verified && status.phase == "verified")
+        .then(|| status.model_root.as_ref().map(PathBuf::from))
+        .flatten()
+}
 #[tauri::command]
 pub fn model_status(
     app: tauri::AppHandle,
@@ -279,7 +342,15 @@ fn restore_status(base: &Path, m: &Manifest) -> SetupStatus {
     let mut s = SetupStatus::initial(m.total());
     if let Ok(bytes) = fs::read(base.join("models.json")) {
         if let Ok(saved) = serde_json::from_slice::<SavedModels>(&bytes) {
-            if saved.manifest_id == m.id {
+            if saved.manifest_id == m.id
+                && unchanged_since_verification(&saved.model_root, m, &saved.verified_files)
+            {
+                s.phase = "verified".into();
+                s.models_verified = true;
+                s.completed_bytes = m.total();
+                s.model_root = Some(saved.model_root.to_string_lossy().into_owned());
+                s.message = "Music models are ready.".into();
+            } else if saved.manifest_id == m.id {
                 s.phase = "unverified".into();
                 s.operation = Some("verify".into());
                 s.model_root = Some(saved.model_root.to_string_lossy().into_owned());
@@ -362,11 +433,8 @@ pub fn download_models(
                 .build()
                 .map_err(|e| e.to_string())?;
             prepare_downloads(&client, &root, &m, &manager)?;
-            save_selection(&base, &root, &m.id)?;
-            manager.phase(
-                "verified",
-                "Music models are verified. The music engine still needs to be installed.",
-            );
+            save_verified(&base, &root, &m)?;
+            manager.phase("verified", "Music models are ready.");
             manager.update(|s| {
                 s.models_verified = true;
                 s.current_file = None;
@@ -399,7 +467,7 @@ pub fn verify_models(
         let result = (|| {
             let _lock = lock_storage(&base)?;
             verify_existing(&root, &m, &manager)?;
-            save_selection(&base, &root, &m.id)?;
+            save_verified(&base, &root, &m)?;
             manager.phase(
                 "verified",
                 "Your existing models are verified and can be reused. No model files were changed.",

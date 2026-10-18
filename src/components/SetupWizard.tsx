@@ -143,9 +143,8 @@ export default function SetupWizard({
                 <div className="notice">
                   <CircleHelp size={17} />
                   <p>
-                    This early preview includes computer checks and a working
-                    draft workspace. You can now prepare verified music models;
-                    music generation is coming next.
+                    Aulo checks your computer and prepares the music models
+                    once. After that, everything runs on this computer.
                   </p>
                 </div>
               </>

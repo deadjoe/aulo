@@ -4,18 +4,23 @@ use std::{
     io::{Read, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    sync::Mutex,
     time::{Duration, Instant},
 };
 use tauri::Manager;
 
-#[derive(Debug, Serialize)]
+pub const PROTOCOL_VERSION: u32 = 2;
+
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EngineStatus {
-    state: &'static str,
-    message: &'static str,
-    generation_ready: bool,
-    engine_version: Option<String>,
-    device: Option<String>,
+    pub state: &'static str,
+    pub message: &'static str,
+    /// True only when the engine started and found a supported accelerator.
+    pub generation_ready: bool,
+    pub engine_version: Option<String>,
+    pub device: Option<String>,
+    pub backend: Option<String>,
 }
 
 impl EngineStatus {
@@ -26,7 +31,22 @@ impl EngineStatus {
             generation_ready: false,
             engine_version: None,
             device: None,
+            backend: None,
         }
+    }
+}
+
+/// The last successful probe. Failures are not cached so the next check retries.
+#[derive(Default)]
+pub struct EngineCache(Mutex<Option<EngineStatus>>);
+
+impl EngineCache {
+    pub fn ready(&self) -> Option<EngineStatus> {
+        self.0
+            .lock()
+            .unwrap()
+            .clone()
+            .filter(|s| s.generation_ready)
     }
 }
 
@@ -38,31 +58,42 @@ struct Probe {
     engine_version: String,
     yue_version: String,
     device: Option<String>,
-    generation_ready: bool,
+    backend: Option<String>,
 }
 
 fn parse_probe(bytes: &[u8]) -> Result<EngineStatus, String> {
     let probe: Probe = serde_json::from_slice(bytes).map_err(|_| "Invalid engine reply")?;
-    if probe.protocol_version != 1
+    if probe.protocol_version != PROTOCOL_VERSION
         || probe.event != "probe"
         || probe.engine_version != "1.0.10"
         || probe.yue_version != "0.1.6"
-        || probe.generation_ready
-        || !matches!(probe.device.as_deref(), None | Some("cuda") | Some("mps"))
+        || !matches!(
+            probe.device.as_deref(),
+            Some("cuda") | Some("mps") | Some("cpu")
+        )
+        || !matches!(
+            probe.backend.as_deref(),
+            None | Some("torch") | Some("torch-eager") | Some("gguf")
+        )
     {
         return Err("Incompatible engine reply".into());
     }
+    let ready = probe.backend.is_some();
     Ok(EngineStatus {
-        state: "detected",
-        message:
-            "The music engine was detected. Model loading and generation still need verification.",
-        generation_ready: false,
+        state: if ready { "ready" } else { "unsupported" },
+        message: if ready {
+            "The music engine is ready on this computer."
+        } else {
+            "The music engine started, but this computer has no supported graphics acceleration."
+        },
+        generation_ready: ready,
         engine_version: Some(probe.engine_version),
         device: probe.device,
+        backend: probe.backend,
     })
 }
 
-fn interpreter(base: &Path) -> PathBuf {
+pub fn interpreter(base: &Path) -> PathBuf {
     #[cfg(debug_assertions)]
     if let Some(path) = std::env::var_os("AULO_DEV_PYTHON") {
         let path = PathBuf::from(path);
@@ -77,27 +108,47 @@ fn interpreter(base: &Path) -> PathBuf {
     }
 }
 
-fn probe_process(python: &Path, timeout: Duration) -> Result<EngineStatus, String> {
-    let mut script = tempfile::NamedTempFile::new().map_err(|e| e.to_string())?;
-    script
-        .write_all(include_bytes!("../../runtime/bridge.py"))
-        .map_err(|e| e.to_string())?;
-    script.flush().map_err(|e| e.to_string())?;
+/// The bridge is compiled into the app and written to a private temporary file per run.
+pub fn bridge_script() -> std::io::Result<tempfile::NamedTempFile> {
+    let mut script = tempfile::NamedTempFile::new()?;
+    script.write_all(include_bytes!("../../runtime/bridge.py"))?;
+    script.flush()?;
+    Ok(script)
+}
+
+/// A bridge process with no shell, no inherited Python configuration and no network.
+pub fn bridge_command(python: &Path, script: &Path, base: &Path) -> Command {
     let mut command = Command::new(python);
     command
         .arg("-I")
-        .arg(script.path())
+        .arg(script)
         .env("HF_HUB_OFFLINE", "1")
         .env("TRANSFORMERS_OFFLINE", "1")
         .env("PYTHONIOENCODING", "utf-8")
+        .env("PYTHONUTF8", "1")
+        // GROOVE's Apple Silicon memory guard: keep PyTorch from driving the Mac into swap.
+        .env("PYTORCH_MPS_HIGH_WATERMARK_RATIO", "0.8")
+        .env("PYTORCH_MPS_LOW_WATERMARK_RATIO", "0.5")
+        // Converted GGUF files and engine binaries live in Aulo's data folder.
+        .env("YUE2_GROOVE_GGUF", base.join("models").join("gguf"))
         .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
+        .stdout(Stdio::piped());
+    let binaries = base.join("runtime").join("yue2cpp");
+    if binaries.is_dir() {
+        command.env("YUE2_GROOVE_YUE2CPP", binaries);
+    }
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x08000000);
     }
+    command
+}
+
+fn probe_process(python: &Path, base: &Path, timeout: Duration) -> Result<EngineStatus, String> {
+    let script = bridge_script().map_err(|e| e.to_string())?;
+    let mut command = bridge_command(python, script.path(), base);
+    command.stderr(Stdio::null());
     let mut child = command.spawn().map_err(|e| e.to_string())?;
     let output = child.stdout.take().ok_or("Missing engine output")?;
     let reader = std::thread::spawn(move || {
@@ -108,7 +159,7 @@ fn probe_process(python: &Path, timeout: Duration) -> Result<EngineStatus, Strin
         .stdin
         .take()
         .ok_or("Missing engine input")?
-        .write_all(b"{\"protocolVersion\":1,\"operation\":\"probe\"}\n");
+        .write_all(b"{\"protocolVersion\":2,\"operation\":\"probe\"}\n");
     let started = Instant::now();
     let result = loop {
         if input_result.is_err() {
@@ -137,48 +188,69 @@ fn probe_process(python: &Path, timeout: Duration) -> Result<EngineStatus, Strin
     parse_probe(&bytes)
 }
 
+pub fn inspect(base: &Path) -> EngineStatus {
+    let python = interpreter(base);
+    if !python.is_file() {
+        return EngineStatus::unavailable(
+            "not_installed",
+            "The music engine is not installed on this computer yet.",
+        );
+    }
+    probe_process(&python, base, Duration::from_secs(60)).unwrap_or_else(|_| {
+        EngineStatus::unavailable(
+            "unavailable",
+            "The music engine could not start. Close and reopen Aulo to try again.",
+        )
+    })
+}
+
 #[tauri::command]
 pub async fn engine_status(app: tauri::AppHandle) -> Result<EngineStatus, String> {
+    // A ready or unsupported result cannot change while Aulo runs; other states are retried.
+    let cached = app.state::<EngineCache>().0.lock().unwrap().clone();
+    if let Some(status) = cached.filter(|s| matches!(s.state, "ready" | "unsupported")) {
+        return Ok(status);
+    }
     let base = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let python = interpreter(&base);
-        if !python.is_file() {
-            return EngineStatus::unavailable(
-                "not_installed",
-                "The music engine is not installed in this preview.",
-            );
-        }
-        probe_process(&python, Duration::from_secs(30)).unwrap_or_else(|_| {
-            EngineStatus::unavailable(
-                "unavailable",
-                "The music engine could not start. Close and reopen Aulo to try again.",
-            )
-        })
-    })
-    .await
-    .map_err(|e| e.to_string())
+    let status = tauri::async_runtime::spawn_blocking(move || inspect(&base))
+        .await
+        .map_err(|e| e.to_string())?;
+    *app.state::<EngineCache>().0.lock().unwrap() = Some(status.clone());
+    Ok(status)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    const GOOD: &str = r#"{"protocolVersion":2,"event":"probe","engineVersion":"1.0.10","yueVersion":"0.1.6","device":"mps","backend":"torch"}"#;
+
     #[test]
-    fn compatibility_is_not_generation_readiness() {
-        let status = parse_probe(br#"{"protocolVersion":1,"event":"probe","engineVersion":"1.0.10","yueVersion":"0.1.6","device":"mps","generationReady":false}"#).unwrap();
-        assert_eq!(status.state, "detected");
+    fn a_supported_backend_makes_the_engine_ready() {
+        let status = parse_probe(GOOD.as_bytes()).unwrap();
+        assert_eq!(status.state, "ready");
+        assert!(status.generation_ready);
+        assert_eq!(status.backend.as_deref(), Some("torch"));
+    }
+
+    #[test]
+    fn no_supported_backend_is_reported_honestly() {
+        let reply = GOOD
+            .replace("\"mps\"", "\"cpu\"")
+            .replace("\"torch\"", "null");
+        let status = parse_probe(reply.as_bytes()).unwrap();
+        assert_eq!(status.state, "unsupported");
         assert!(!status.generation_ready);
     }
 
     #[test]
-    fn rejects_noise_wrong_versions_and_false_readiness() {
-        let good = r#"{"protocolVersion":1,"event":"probe","engineVersion":"1.0.10","yueVersion":"0.1.6","device":null,"generationReady":false}"#;
+    fn rejects_noise_wrong_versions_and_unknown_backends() {
         for bad in [
-            format!("log\n{good}"),
-            good.replace("1.0.10", "1.0.11"),
-            good.replace("false", "true"),
-            good.replace("\"probe\"", "\"completed\""),
-            good.replace(":1,", ":2,"),
+            format!("log\n{GOOD}"),
+            GOOD.replace("1.0.10", "1.0.11"),
+            GOOD.replace("\"torch\"", "\"vllm\""),
+            GOOD.replace("\"probe\"", "\"completed\""),
+            GOOD.replace(":2,", ":1,"),
         ] {
             assert!(parse_probe(bad.as_bytes()).is_err());
         }
@@ -194,7 +266,7 @@ mod tests {
             std::fs::write(&executable, script).unwrap();
             std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
             let started = Instant::now();
-            assert!(probe_process(&executable, Duration::from_millis(100)).is_err());
+            assert!(probe_process(&executable, dir.path(), Duration::from_millis(100)).is_err());
             assert!(started.elapsed() < Duration::from_secs(3));
         }
     }
@@ -203,8 +275,9 @@ mod tests {
     #[ignore = "Requires an explicitly selected local development engine"]
     fn live_engine_probe() {
         let python = std::env::var_os("AULO_DEV_PYTHON").expect("Set AULO_DEV_PYTHON");
-        let status = probe_process(Path::new(&python), Duration::from_secs(30)).unwrap();
-        assert_eq!(status.state, "detected");
-        assert!(!status.generation_ready);
+        let dir = tempfile::tempdir().unwrap();
+        let status =
+            probe_process(Path::new(&python), dir.path(), Duration::from_secs(60)).unwrap();
+        assert_eq!(status.state, "ready");
     }
 }

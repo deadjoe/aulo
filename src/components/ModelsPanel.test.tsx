@@ -60,7 +60,9 @@ describe("native model preparation", () => {
     await user.click(screen.getByRole("checkbox"));
     await user.click(download);
     expect(models.downloadModels).toHaveBeenCalledWith(true);
-    expect(screen.getByText("Music engine: not installed yet.")).toBeVisible();
+    expect(
+      await screen.findByText(/Open the desktop app to check the music engine/),
+    ).toBeVisible();
   });
   it("does not start a download when free space is insufficient", async () => {
     vi.mocked(models.getModelPlan).mockResolvedValue({
@@ -95,9 +97,7 @@ describe("native model preparation", () => {
     expect(models.verifyModels).toHaveBeenCalledWith("/existing/models");
     expect(await screen.findByText("Verified")).toBeVisible();
     expect(
-      screen.getByText(
-        /Your models are verified, but music generation is not available/,
-      ),
+      screen.getByText(/Open the desktop app to check the music engine/),
     ).toBeVisible();
   });
   it("keeps model import errors actionable and retries verification rather than downloading", async () => {
