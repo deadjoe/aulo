@@ -1,5 +1,10 @@
 # Validation record
 
+## Design and code review pass — 2026-10-18
+
+- A screen-by-screen review in a browser preview at 1440×900 and 960×700 (the minimum window) covered the first-run guide, models step, workspace in both modes, song details, menus, download, settings and AI connection dialogs, toasts and empty states, using temporary local fixtures that were not committed. The native window and the native-only model download states were not captured.
+- `npm run check`: 31 tests and the production build. `cargo test --locked`: 37 native tests; clippy with warnings denied. `python3 -m unittest discover -s runtime/tests`: 14 tests.
+
 ## Download formats — 2026-10-18
 
 - MP3 and WAV are encoded inside Aulo (claxon FLAC decoding, hound WAV writing, LAME through mp3lame-encoder); no Python runtime or installed tool is involved.

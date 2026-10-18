@@ -55,6 +55,8 @@ Reserved as an independent integration. A later settings flow may connect an exi
 
 ## Visual direction
 
-A quiet graphite workspace with warm peach actions and native system typography. The layout follows Suno's logged-in Create page (navigation, create panel, library, bottom player) while excluding social feeds, credits, subscriptions, and public-sharing controls. Each song gets generated cover art derived from its identifier and the moods named in its style; it is the one expressive element, and it animates only while that song is being made.
+A night studio: warm graphite surfaces, a peach-to-coral gradient reserved for the things people press, and generated cover art as the one expressive element. Display type is Bricolage Grotesque and interface type is Figtree, both SIL Open Font License fonts bundled with the app (no network fonts). Colours, type and controls live as tokens at the top of `src/styles.css`.
 
-The workspace starts honestly empty. It contains no seeded songs or simulated progress. The desktop title bar remains native. Below 1100 px the navigation collapses to icons; below 820 px the create panel stacks above the library. Reduced-motion and keyboard users are supported.
+The layout follows Suno's logged-in Create page (navigation, create panel, library, bottom player) while excluding social feeds, credits, subscriptions, and public sharing. The first-run guide uses the same surfaces and a cover-art hero. Copy is written for people with no technical background: no model, engine, file or version names appear in normal use, and every error says what to do next.
+
+The workspace starts honestly empty, with no seeded songs or simulated progress. The title bar stays native. Below 1100 px the navigation collapses to icons; below 1000 px the first-run hero is hidden; below 820 px the create panel stacks above the library. Dialogs trap focus, Escape closes them, and reduced motion is respected.
