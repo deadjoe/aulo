@@ -20,15 +20,13 @@ import DownloadDialog from "./components/DownloadDialog";
 import Player, { usePlayer } from "./components/Player";
 import { Brand } from "./components/Brand";
 import { EMPTY_REQUEST, loadComposer, saveComposer } from "./lib/composer";
+import { useLibrary, useMessage } from "./lib/useLibrary";
 import {
   cancelSong,
-  createSong,
   creationStatus,
   displayTitle,
   revealSong,
   trashSong,
-  listSongs,
-  onSongUpdated,
   updateSong,
   type CreationStatus,
   type Song,
@@ -53,32 +51,16 @@ export default function App() {
   const [setupStep, setSetupStep] = useState(0);
   const [page, setPage] = useState<Page>("create");
   const [modal, setModal] = useState<Modal | null>(null);
-  const [songs, setSongs] = useState<Song[]>([]);
   const [request, setRequest] = useState<SongRequest>(loadComposer);
   const [status, setStatus] = useState<CreationStatus | null>(null);
   const [creating, setCreating] = useState(false);
-  const [message, setMessage] = useState("");
-  // An optional way to take back the action the message describes.
-  const [undo, setUndo] = useState<(() => void) | null>(null);
-  const notify = (text: string, undoAction: (() => void) | null = null) => {
-    setMessage(text);
-    setUndo(() => undoAction);
-  };
+  const { message, undo, notify, dismiss } = useMessage();
+  const { songs, start, remove } = useLibrary(explored, notify);
   const [openId, setOpenId] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [downloading, setDownloading] = useState<Song | null>(null);
   const player = usePlayer(songs);
   const openSong = songs.find((s) => s.id === openId) ?? null;
-
-  // Messages confirm or explain; they leave on their own.
-  useEffect(() => {
-    if (!message) {
-      setUndo(null);
-      return;
-    }
-    const timer = window.setTimeout(() => setMessage(""), undo ? 6000 : 4500);
-    return () => window.clearTimeout(timer);
-  }, [message, undo]);
 
   const refreshStatus = useCallback(() => {
     creationStatus().then(setStatus, () =>
@@ -94,23 +76,8 @@ export default function App() {
   useEffect(() => {
     if (!explored) return;
     refreshStatus();
-    listSongs().then(setSongs, () =>
-      notify("Your songs could not be loaded. Reopen Aulo to try again."),
-    );
-    const stop = onSongUpdated((song) =>
-      setSongs((list) => {
-        const index = list.findIndex((s) => s.id === song.id);
-        if (index < 0) return [song, ...list];
-        const next = [...list];
-        next[index] = song;
-        return next;
-      }),
-    );
     window.addEventListener("focus", refreshStatus);
-    return () => {
-      stop();
-      window.removeEventListener("focus", refreshStatus);
-    };
+    return () => window.removeEventListener("focus", refreshStatus);
   }, [explored, refreshStatus]);
 
   useEffect(() => saveComposer(request), [request]);
@@ -126,13 +93,6 @@ export default function App() {
   function openSetup() {
     setSetupStep(2);
     setExplored(false);
-  }
-  async function start(next: SongRequest) {
-    const song = await createSong(next);
-    setSongs((list) =>
-      list.some((s) => s.id === song.id) ? list : [song, ...list],
-    );
-    return song;
   }
   async function create() {
     setCreating(true);
@@ -178,7 +138,7 @@ export default function App() {
     onTrash: (song) =>
       void trashSong(song.id).then(
         () => {
-          setSongs((list) => list.filter((s) => s.id !== song.id));
+          remove(song.id);
           if (openId === song.id) setOpenId(null);
           notify("Moved to the Trash.");
         },
@@ -317,7 +277,7 @@ export default function App() {
               className="toast-action"
               onClick={() => {
                 undo();
-                setMessage("");
+                dismiss();
               }}
             >
               Undo
@@ -326,7 +286,7 @@ export default function App() {
           <button
             className="icon-button"
             aria-label="Dismiss message"
-            onClick={() => setMessage("")}
+            onClick={dismiss}
           >
             <X size={15} />
           </button>
