@@ -263,9 +263,12 @@ export default function App() {
           void trashSongs(list.map((s) => s.id)).then(
             (moved) => {
               if (openId && moved.includes(openId)) setOpenId(null);
+              const left = list.length - moved.length;
               notify(
-                `Moved ${titleOf(list)} to the Trash.`,
-                () => void trashSongs(moved, false),
+                left === 0
+                  ? `Moved ${titleOf(list)} to the Trash.`
+                  : `Moved ${titleOf(songsIn(moved))} to the Trash. ${count(left, "song")} couldn’t be moved; try again.`,
+                moved.length ? () => void trashSongs(moved, false) : null,
               );
             },
             (error: unknown) =>

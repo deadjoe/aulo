@@ -10,6 +10,8 @@ An outside review's findings were checked against the code; each was reproduced 
 - Bytecode: with `-I`, `PYTHONDONTWRITEBYTECODE` was ignored and the bundled Python wrote `__pycache__` (reproduced); the engine now runs with `-B`, checked by a test that runs Python.
 - Cancel before start: reproduced with the command reader; a pending cancel is now applied when its song begins.
 - Waveforms: peaks now stream from the FLAC (equal to the full decode on a real 3:57 song, `live_waveform_streams_a_real_song`), at most two at a time, only for visible songs. Memory was reasoned from the code, not measured under a large library.
+- Batch Trash: when only some songs could be saved, the message names what moved and how many could not, instead of reporting all as moved.
+- Creation readiness also applies the setup guide's hardware rule (Apple silicon with 32 GB of memory; on Windows, 8 GB of NVIDIA graphics memory when it is known), so a computer below it never shows Start creating or an enabled Create button.
 - Accessibility: input placeholders raised from 3.5:1 to 4.8:1 contrast; menus open and move with the arrow keys, Home and End, and return focus to their button.
 
 ## Bundled engine — 2026-10-18

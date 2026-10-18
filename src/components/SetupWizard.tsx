@@ -77,9 +77,10 @@ export default function SetupWizard({
     };
   }, [step]);
 
-  // Once the models are ready, ask the one question that matters: can Aulo create here?
+  // The one question that matters: can Aulo create here? The computer can rule
+  // that out before the models are even downloaded.
   useEffect(() => {
-    if (step !== 2 || !modelsReady) {
+    if (step !== 2 || !desktopModelsAvailable()) {
       setCreation(null);
       return;
     }
@@ -102,11 +103,10 @@ export default function SetupWizard({
     };
   }, [step, modelsReady]);
   const canCreate = modelsReady && creation?.ready === true;
+  const unsupported = creation?.blocker === "unsupported";
   const blocked =
-    modelsReady &&
-    creation != null &&
-    !creation.ready &&
-    creation.blocker !== "models";
+    unsupported ||
+    (modelsReady && creation?.ready === false && creation.blocker !== "models");
   const finalTitle = canCreate
     ? "You’re all set"
     : blocked
@@ -116,11 +116,13 @@ export default function SetupWizard({
         : "Get the music models";
   const finalLead = canCreate
     ? "The music models are ready. Time to make your first song."
-    : blocked
-      ? "The music models are ready, but this computer can’t make songs with Aulo yet. You can still look around."
-      : modelsReady
-        ? "The music models are ready. Aulo is checking that it can make music on this computer."
-        : "Aulo needs its music models once to make songs. They stay on this computer.";
+    : unsupported
+      ? `${creation?.message} You can still look around.`
+      : blocked
+        ? "The music models are ready, but this computer can’t make songs with Aulo yet. You can still look around."
+        : modelsReady
+          ? "The music models are ready. Aulo is checking that it can make music on this computer."
+          : "Aulo needs its music models once to make songs. They stay on this computer.";
 
   const facts: [React.ReactNode, string, string | null | undefined][] = [
     [<Cpu key="c" size={18} />, "Chip", hardware?.chip],
