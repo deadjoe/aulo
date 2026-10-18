@@ -2,7 +2,8 @@
 
 ## Download formats — 2026-10-18
 
-- Opt-in live test `live_exports_every_format` converted a real 3:57 song: M4A 7.5 MB, MP3 9.5 MB (320 kbps), WAV 68.2 MB, FLAC 47.8 MB, about 5 seconds in total.
+- MP3 and WAV are encoded inside Aulo (claxon FLAC decoding, hound WAV writing, LAME through mp3lame-encoder); no Python runtime or installed tool is involved.
+- Opt-in live test `live_exports_every_format` (release build) converted a real 3:57 song: M4A 7.5 MB in 2.0 s, MP3 9.5 MB in 4.6 s (320 kbps), WAV 68.2 MB in 0.5 s, FLAC 47.8 MB copied. The WAV matched the original FLAC sample for sample (maximum difference 1.2e-7, float rounding); the MP3 decoded to the same length (236.76 s) and loudness (RMS 0.161) as the original.
 - Unit tests cover the FLAC copy, staged replacement and a failed conversion leaving the existing file untouched; a component test covers choosing and remembering a format.
 - Windows offers MP3, WAV and FLAC; M4A needs a Windows encoder that is not integrated yet.
 
