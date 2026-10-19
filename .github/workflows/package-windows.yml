@@ -38,18 +38,32 @@ jobs:
             src-tauri/engine/python/python.exe -I runtime/bridge.py
       - name: Bundle Aulo with the engine
         run: npm run bundle -- --bundles nsis
-      - name: Check the installer carries the GGUF engine and fits NSIS
+      - name: Install the installer silently and check what it put on disk
         shell: pwsh
         run: |
-          Get-ChildItem src-tauri/engine/yue2cpp | Format-Table Name, Length
-          $synth = Get-ChildItem src-tauri/target/release -Recurse -Filter yue-synth.exe |
-            Where-Object { $_.FullName -notmatch '\\bundle\\' }
-          if (-not $synth) { throw "yue-synth.exe is not among the app's resources" }
+          $installer = Get-ChildItem src-tauri/target/release/bundle/nsis/*.exe | Select-Object -First 1
+          "{0}: {1:N0} MB" -f $installer.Name, ($installer.Length / 1MB)
+          # NSIS keeps its data behind 32-bit offsets; installers past about 2 GB are
+          # widely reported to fail. No official figure, so this is a safety margin.
+          if ($installer.Length -gt 2GB) { throw "the installer is over 2 GB" }
+          $dir = Join-Path $env:RUNNER_TEMP "Aulo install"
+          # /D must come last and unquoted, even with spaces.
+          $setup = Start-Process -Wait -PassThru -FilePath $installer.FullName -ArgumentList "/S /D=$dir"
+          if ($setup.ExitCode -ne 0) { throw "the installer exited with $($setup.ExitCode)" }
+          Get-ChildItem $dir | Format-Table Name, Length
+          if (-not (Get-ChildItem $dir -Filter *.exe | Where-Object Name -ne "uninstall.exe")) {
+            throw "the app was not installed"
+          }
+          $synth = Get-ChildItem (Join-Path $dir engine) -Recurse -Filter yue-synth.exe
+          if (-not $synth) { throw "the installed engine has no yue-synth.exe" }
           $synth | ForEach-Object { $_.FullName }
-          $installer = Get-ChildItem src-tauri/target/release/bundle/nsis/*.exe
-          $installer | ForEach-Object { "{0}: {1:N0} MB" -f $_.Name, ($_.Length / 1MB) }
-          # NSIS cannot build or reliably run installers past about 2 GB.
-          if (($installer | Measure-Object Length -Sum).Sum -gt 2GB) { throw "the installer is over 2 GB" }
+          $env:PYTHONDONTWRITEBYTECODE = "1"
+          $env:HF_HUB_OFFLINE = "1"
+          Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
+          # The app writes this same bridge.py out when it starts the engine.
+          '{"protocolVersion":3,"operation":"probe"}' |
+            & (Join-Path $dir engine/python/python.exe) -I runtime/bridge.py
+          if ($LASTEXITCODE -ne 0) { throw "the installed engine did not start" }
       - uses: actions/upload-artifact@v4
         with:
           name: Aulo-windows-x64

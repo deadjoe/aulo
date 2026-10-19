@@ -326,9 +326,6 @@ pub struct ModelPlan {
     pub license: String,
     pub license_url: String,
     pub file_count: usize,
-    /// What Aulo's own models folder holds now (downloaded or partly downloaded),
-    /// which choosing another folder deletes.
-    pub own_copy_bytes: u64,
 }
 #[tauri::command]
 pub async fn model_plan(app: tauri::AppHandle) -> Result<ModelPlan, String> {
@@ -363,7 +360,6 @@ pub async fn model_plan(app: tauri::AppHandle) -> Result<ModelPlan, String> {
             license: m.license,
             license_url: m.license_url,
             file_count: m.files.len(),
-            own_copy_bytes: crate::support::folder_bytes(&models_home(&base)),
         })
     })
     .await
@@ -636,22 +632,28 @@ pub fn remove_model_files(base: &Path) -> Result<Option<PathBuf>, String> {
     Ok(chosen)
 }
 
-/// Delete every folder in Aulo's own `models` folder except `keep`, any folder holding
-/// it and anything inside it. A link is removed, never followed. One set of weights
-/// per computer.
-fn remove_managed_except(base: &Path, keep: &Path) -> Result<(), String> {
+/// Every folder in Aulo's own `models` folder except `keep`, any folder holding it and
+/// anything inside it: what choosing `keep` replaces. Links are listed, not followed.
+fn managed_except(base: &Path, keep: &Path) -> Vec<PathBuf> {
     let Ok(entries) = fs::read_dir(models_home(base)) else {
-        return Ok(());
+        return Vec::new();
     };
     // Compare real locations too: the same folder can be named through a link.
     let real_keep = fs::canonicalize(keep).unwrap_or_else(|_| keep.to_path_buf());
     let related = |a: &Path, b: &Path| a.starts_with(b) || b.starts_with(a);
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let real = fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
-        if related(&path, keep) || related(&real, &real_keep) {
-            continue;
-        }
+    entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            let real = fs::canonicalize(path).unwrap_or_else(|_| path.clone());
+            !related(path, keep) && !related(&real, &real_keep)
+        })
+        .collect()
+}
+
+/// Delete what [`managed_except`] lists. One set of weights per computer.
+fn remove_managed_except(base: &Path, keep: &Path) -> Result<(), String> {
+    for path in managed_except(base, keep) {
         let removed = match fs::symlink_metadata(&path) {
             Ok(meta) if meta.file_type().is_symlink() => fs::remove_file(&path),
             Ok(meta) if meta.is_dir() => fs::remove_dir_all(&path),
@@ -663,6 +665,24 @@ fn remove_managed_except(base: &Path, keep: &Path) -> Result<(), String> {
         })?;
     }
     Ok(())
+}
+
+/// How much of Aulo's own download choosing `folder` would delete; 0 when the folder is
+/// that download (or nothing was downloaded), so there is nothing to ask about.
+#[tauri::command]
+pub async fn replaced_bytes(app: tauri::AppHandle, folder: String) -> Result<u64, String> {
+    let base = base_path(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let keep = PathBuf::from(&folder);
+        let keep = keep.canonicalize().unwrap_or(keep);
+        Ok(managed_except(&base, &keep)
+            .iter()
+            .filter(|p| fs::symlink_metadata(p).is_ok_and(|m| m.is_dir()))
+            .map(|p| crate::support::folder_bytes(p))
+            .sum())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Before downloading `m` into `root`: files an earlier model set left in Aulo's own
@@ -743,10 +763,10 @@ pub async fn remove_models(
 }
 
 #[tauri::command]
-pub fn verify_models(
+pub async fn verify_models(
     app: tauri::AppHandle,
-    manager: tauri::State<ModelManager>,
-    songs: tauri::State<crate::songs::SongService>,
+    manager: tauri::State<'_, ModelManager>,
+    songs: tauri::State<'_, crate::songs::SongService>,
     folder: String,
 ) -> Result<(), String> {
     // A folder that checks out replaces Aulo's own copy, which a song may be reading.

@@ -628,22 +628,14 @@ fn the_usual_time_comes_from_the_last_songs_this_computer_finished() {
 }
 
 #[test]
-fn every_reason_the_engine_can_send_is_known_and_explained() {
-    // Windows checkouts may end lines with \r\n.
-    let bridge = include_str!("../../../runtime/bridge.py").replace("\r\n", "\n");
-    let start = bridge.find("FAILURE_PATTERNS = (").unwrap();
-    let end = start + bridge[start..].find("\n)\n").unwrap();
-    let sent: Vec<&str> = bridge[start..end]
-        .split("(\"")
-        .skip(1)
-        .map(|rest| &rest[..rest.find('"').unwrap()])
-        .collect();
-    assert_eq!(sent.len(), 6, "{sent:?}");
+fn every_reason_aulo_accepts_is_one_the_engine_sends_and_explained() {
+    // runtime/tests checks the other direction: every reason bridge.py sends is here.
+    let bridge = include_str!("../../../runtime/bridge.py");
     let generic = failure_message("anything else");
-    for reason in sent {
+    for reason in ENGINE_FAILURES.iter().filter(|r| **r != "unknown") {
         assert!(
-            ENGINE_FAILURES.contains(&reason),
-            "{reason} is not accepted"
+            bridge.contains(&format!("\"{reason}\"")),
+            "bridge.py never sends {reason}"
         );
         assert_ne!(failure_message(reason), generic, "{reason} has no message");
     }

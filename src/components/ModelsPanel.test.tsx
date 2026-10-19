@@ -13,6 +13,7 @@ vi.mock("../lib/models", async (original) => ({
   getModelStatus: vi.fn(),
   downloadModels: vi.fn(),
   verifyModels: vi.fn(),
+  replacedBytes: vi.fn(),
   pauseModels: vi.fn(),
   openModelLicense: vi.fn().mockResolvedValue(undefined),
 }));
@@ -26,7 +27,6 @@ const plan: models.ModelPlan = {
   license: "CC BY-NC 4.0",
   licenseUrl: "https://creativecommons.org/licenses/by-nc/4.0/",
   fileCount: 17,
-  ownCopyBytes: 0,
 };
 const initial: models.ModelStatus = {
   phase: "not_started",
@@ -45,6 +45,7 @@ beforeEach(() => {
   vi.mocked(models.getModelPlan).mockResolvedValue(plan);
   vi.mocked(models.getModelStatus).mockResolvedValue(initial);
   vi.mocked(chooseModelFolder).mockResolvedValue("/existing/models");
+  vi.mocked(models.replacedBytes).mockResolvedValue(0);
 });
 afterEach(cleanup);
 describe("native model preparation", () => {
@@ -160,10 +161,7 @@ describe("native model preparation", () => {
     expect(screen.queryByText("Ready")).not.toBeInTheDocument();
   });
   it("asks before a chosen folder replaces Aulo's own download", async () => {
-    vi.mocked(models.getModelPlan).mockResolvedValue({
-      ...plan,
-      ownCopyBytes: 4_340_000_000,
-    });
+    vi.mocked(models.replacedBytes).mockResolvedValue(4_340_000_000);
     const user = userEvent.setup();
     render(<ModelsPanel />);
     await user.click(
@@ -183,6 +181,20 @@ describe("native model preparation", () => {
       await screen.findByRole("button", { name: "Use this folder" }),
     );
     expect(models.verifyModels).toHaveBeenCalledWith("/existing/models");
+  });
+  it("does not ask when the chosen folder is Aulo's own download", async () => {
+    const user = userEvent.setup();
+    render(<ModelsPanel />);
+    await user.click(
+      await screen.findByRole("button", {
+        name: /Already have the music models/,
+      }),
+    );
+    await waitFor(() =>
+      expect(models.verifyModels).toHaveBeenCalledWith("/existing/models"),
+    );
+    expect(models.replacedBytes).toHaveBeenCalledWith("/existing/models");
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   });
   it("offers no download or folder on a computer that cannot make songs", async () => {
     vi.mocked(models.getModelPlan).mockRejectedValue(
