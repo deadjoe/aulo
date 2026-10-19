@@ -18,8 +18,11 @@ describe("hardware eligibility", () => {
       status: "candidate",
       profile: "apple-silicon",
     }));
-  it("does not recommend an unsupported low-memory Mac", () =>
-    expect(assessHardware({ ...mac, memoryGiB: 16 }).profile).toBeNull());
+  it("accepts Macs from 8 GB and turns smaller ones away", () => {
+    expect(assessHardware({ ...mac, memoryGiB: 16 }).status).toBe("candidate");
+    expect(assessHardware({ ...mac, memoryGiB: 7.8 }).status).toBe("candidate");
+    expect(assessHardware({ ...mac, memoryGiB: 4 }).profile).toBeNull();
+  });
   it("does not silently fall back to CPU on Windows", () =>
     expect(
       assessHardware({ ...mac, platform: "windows", arch: "x86_64" }).status,

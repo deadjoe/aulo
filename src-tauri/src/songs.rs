@@ -373,7 +373,7 @@ fn library_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 }
 
 /// The engine's stderr, kept across songs and trimmed when it grows large.
-fn engine_log(base: &Path) -> Result<File, String> {
+pub(crate) fn engine_log(base: &Path) -> Result<File, String> {
     let folder = base.join("logs");
     fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
     let path = folder.join("engine.log");
@@ -733,10 +733,13 @@ pub fn generate_command(
 #[serde(rename_all = "camelCase")]
 pub struct CreationStatus {
     ready: bool,
-    /// models | engine | unsupported | ready
+    /// models | engine | unsupported | preparing | ready
     blocker: &'static str,
     message: String,
 }
+
+const NOT_PREPARED: &str =
+    "Aulo is getting the music models ready for this computer. This happens once.";
 
 #[tauri::command]
 pub async fn creation_status(app: tauri::AppHandle) -> Result<CreationStatus, String> {
@@ -750,9 +753,10 @@ pub async fn creation_status(app: tauri::AppHandle) -> Result<CreationStatus, St
             message: message.into(),
         });
     }
-    let models_ready = models::verified_root(&app, &app.state::<models::ModelManager>()).is_some();
+    let model_root = models::verified_root(&app, &app.state::<models::ModelManager>());
+    let base = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let engine = engine::engine_status(app.clone()).await?;
-    Ok(if !models_ready {
+    Ok(if model_root.is_none() {
         CreationStatus {
             ready: false,
             blocker: "models",
@@ -767,6 +771,12 @@ pub async fn creation_status(app: tauri::AppHandle) -> Result<CreationStatus, St
                 "engine"
             },
             message: engine.message.into(),
+        }
+    } else if !engine::models_prepared(&base, model_root.as_deref().unwrap_or(Path::new(""))) {
+        CreationStatus {
+            ready: false,
+            blocker: "preparing",
+            message: NOT_PREPARED.into(),
         }
     } else {
         CreationStatus {
@@ -899,10 +909,13 @@ pub async fn create_song(
     if let Some(reason) = hardware {
         return Err(reason.into());
     }
-    if app.state::<engine::EngineCache>().ready().is_none()
-        || models::verified_root(&app, &app.state::<models::ModelManager>()).is_none()
-    {
+    let model_root = models::verified_root(&app, &app.state::<models::ModelManager>());
+    if app.state::<engine::EngineCache>().ready().is_none() || model_root.is_none() {
         return Err("Aulo isn't ready to create yet.".into());
+    }
+    let base = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    if !engine::models_prepared(&base, model_root.as_deref().unwrap_or(Path::new(""))) {
+        return Err(NOT_PREPARED.into());
     }
     let root = library_root(&app)?;
     let mut request = request;

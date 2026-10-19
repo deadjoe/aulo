@@ -47,6 +47,6 @@ The model license is shown as CC BY-NC 4.0 (non-commercial), with a fixed offici
 
 ## Initial hardware targets
 
-Provisional targets follow the current YUE2 // GROOVE documentation: Apple Silicon with 32 GB or more memory, and x86-64 Windows with an NVIDIA GPU of at least 8 GB graphics memory. These do not guarantee performance or compatibility. No AMD, Intel GPU, CPU-only, Intel Mac, or Windows ARM support is promised.
+Targets: Apple Silicon with 8 GB of memory or more (16 GB and up on the PyTorch engine, below that on the GGUF engine), and x86-64 Windows with an NVIDIA GPU of at least 8 GB (GGUF engine only). These do not guarantee performance or compatibility. No AMD, Intel GPU, CPU-only, Intel Mac, or Windows ARM support is promised.
 
 Models can be prepared independently of engine compatibility; this release never enables generation. The production runtime installer must gate unsupported hardware before an automatic full setup. Memory allocation limits and available memory must be checked by the core before generation. Runtime choices belong to the installer/core, not to user-facing dropdowns.

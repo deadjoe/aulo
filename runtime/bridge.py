@@ -141,16 +141,27 @@ def inspect_runtime():
     device = "cuda" if torch.cuda.is_available() else (
         "mps" if torch.backends.mps.is_available() else "cpu"
     )
-    backend = select_backend(device, adapter, gguf_engine)
+    wanted = os.environ.get("AULO_ENGINE") or None
+    if wanted not in (None, "gguf", "torch"):
+        raise ValueError("Unknown engine.")
+    backend = select_backend(device, adapter, gguf_engine, wanted)
+    reason = None
+    if backend is None:
+        reason = "missing_engine" if wanted == "gguf" else "no_accelerator"
     return {"engineVersion": groove, "yueVersion": yue, "torchVersion": str(torch.__version__),
-            "device": device, "backend": backend}
+            "device": device, "backend": backend, "reason": reason}
 
 
-def select_backend(device, adapter, gguf_engine):
-    """GROOVE's own BACKEND=auto rule plus its FlashAttention fallback; None when unsupported."""
-    backend, _ = gguf_engine.auto_backend(device, gguf_engine.cuda_total_vram_gib())
-    if backend == "gguf":
-        return "gguf"
+def select_backend(device, adapter, gguf_engine, wanted=None):
+    """The engine Aulo decided on for this computer (``AULO_ENGINE``: ``gguf`` or ``torch``),
+    or, without a decision (development), GROOVE's own BACKEND=auto rule. Adds GROOVE's
+    FlashAttention fallback. None when this computer cannot run it."""
+    if wanted == "gguf":
+        return "gguf" if gguf_engine.available() else None
+    if wanted is None:
+        backend, _ = gguf_engine.auto_backend(device, gguf_engine.cuda_total_vram_gib())
+        if backend == "gguf":
+            return "gguf"
     if device == "cpu":
         return None  # GROOVE would run for hours on a CPU; Aulo does not offer that.
     if device == "cuda" and not adapter.cuda_flash_attention_usable():
@@ -159,15 +170,36 @@ def select_backend(device, adapter, gguf_engine):
 
 
 def validate_request(request):
-    """The first line: ``probe`` or ``serve``."""
+    """The first line: ``probe``, ``serve`` or ``prepare`` (GGUF files, once)."""
     if not isinstance(request, dict) or request.get("protocolVersion") != PROTOCOL_VERSION:
         raise ValueError("Unsupported engine protocol.")
     operation = request.get("operation")
-    if operation not in ("probe", "serve"):
+    if operation not in ("probe", "serve", "prepare"):
         raise ValueError("Unknown engine operation.")
-    if set(request) != {"protocolVersion", "operation"}:
+    if operation == "prepare":
+        if set(request) != {"protocolVersion", "operation", "modelRoot"}:
+            raise ValueError("Unexpected fields.")
+        if not isinstance(request["modelRoot"], str) or not Path(request["modelRoot"]).is_absolute():
+            raise ValueError("modelRoot must be an absolute application-owned path.")
+    elif set(request) != {"protocolVersion", "operation"}:
         raise ValueError("Unexpected fields.")
     return operation
+
+
+def prepare(runtime, request, report):
+    """GROOVE's one-time GGUF preparation (convert and quantise the checkpoints), done ahead
+    of the first song. Nothing to do for the PyTorch engine."""
+    if runtime["backend"] == "gguf":
+        from yue2_groove import gguf_engine
+
+        root = Path(request["modelRoot"]).resolve(strict=True)
+        model, vae = root / "YuE2-3B", root / "YuE2-Vae"
+        if not model.is_dir() or not vae.is_dir():
+            raise ValueError("The music model folder is incomplete.")
+        gguf_engine.prepare(model, vae, log=lambda _line: report("progress", stage="preparing"))
+    elif runtime["backend"] is None:
+        raise RuntimeError("This computer cannot run the music engine.")
+    report("prepared", backend=runtime["backend"])
 
 
 def validate_command(command):
@@ -466,10 +498,13 @@ def main():
             raw = sys.stdin.buffer.readline(MAX_REQUEST_BYTES + 1)
             if len(raw) > MAX_REQUEST_BYTES:
                 raise ValueError("Engine request is too large.")
-            operation = validate_request(json.loads(raw))
+            request = json.loads(raw)
+            operation = validate_request(request)
             runtime = inspect_runtime()
             if operation == "probe":
                 report("probe", **runtime)
+            elif operation == "prepare":
+                prepare(runtime, request, report)
             else:
                 serve(runtime, Commands(sys.stdin.buffer).start(), report)
             code = 0

@@ -12,7 +12,11 @@ import {
 } from "lucide-react";
 import { assessHardware, detectHardware, type Hardware } from "../lib/hardware";
 import { getModelStatus, desktopModelsAvailable } from "../lib/models";
-import { creationStatus, type CreationStatus } from "../lib/songs";
+import {
+  creationStatus,
+  prepareEngine,
+  type CreationStatus,
+} from "../lib/songs";
 import { Brand } from "./Brand";
 import CoverArt from "./CoverArt";
 import ModelsPanel from "./ModelsPanel";
@@ -104,9 +108,13 @@ export default function SetupWizard({
   }, [step, modelsReady]);
   const canCreate = modelsReady && creation?.ready === true;
   const unsupported = creation?.blocker === "unsupported";
+  const preparing = modelsReady && creation?.blocker === "preparing";
   const blocked =
     unsupported ||
-    (modelsReady && creation?.ready === false && creation.blocker !== "models");
+    (modelsReady &&
+      creation?.ready === false &&
+      creation.blocker !== "models" &&
+      creation.blocker !== "preparing");
   const finalTitle = canCreate
     ? "You’re all set"
     : blocked
@@ -114,15 +122,35 @@ export default function SetupWizard({
       : modelsReady
         ? "Getting ready…"
         : "Get the music models";
+  // Readying the models for this computer's engine happens once, right here.
+  useEffect(() => {
+    if (!preparing) return;
+    let active = true;
+    setError("");
+    prepareEngine().catch(
+      (e: unknown) =>
+        active &&
+        setError(
+          typeof e === "string"
+            ? e
+            : "Aulo couldn’t get the music models ready.",
+        ),
+    );
+    return () => {
+      active = false;
+    };
+  }, [preparing]);
   const finalLead = canCreate
     ? "The music models are ready. Time to make your first song."
     : unsupported
       ? `${creation?.message} You can still look around.`
       : blocked
         ? "The music models are ready, but this computer can’t make songs with Aulo yet. You can still look around."
-        : modelsReady
-          ? "The music models are ready. Aulo is checking that it can make music on this computer."
-          : "Aulo needs its music models once to make songs. They stay on this computer.";
+        : preparing
+          ? "Aulo is getting the music models ready for this computer. This happens once and takes a minute or two."
+          : modelsReady
+            ? "The music models are ready. Aulo is checking that it can make music on this computer."
+            : "Aulo needs its music models once to make songs. They stay on this computer.";
 
   const facts: [React.ReactNode, string, string | null | undefined][] = [
     [<Cpu key="c" size={18} />, "Chip", hardware?.chip],
