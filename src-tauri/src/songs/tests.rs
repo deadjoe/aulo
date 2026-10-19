@@ -15,6 +15,7 @@ fn request() -> SongRequest {
 
 fn work(id: &str, state: SongState) -> Work {
     Work {
+        format: crate::FormatVersion::CURRENT,
         id: id.into(),
         created_ms: 1,
         request: request(),

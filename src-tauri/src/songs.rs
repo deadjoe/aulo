@@ -86,6 +86,8 @@ pub enum SongState {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Work {
+    #[serde(default)]
+    pub format: crate::FormatVersion,
     pub id: String,
     pub created_ms: u64,
     pub request: SongRequest,
@@ -1002,6 +1004,7 @@ pub async fn create_song(
     let mut request = request;
     request.title = request.title.trim().to_string();
     let work = Work {
+        format: crate::FormatVersion::CURRENT,
         id: new_id(),
         created_ms: now_ms(),
         request,

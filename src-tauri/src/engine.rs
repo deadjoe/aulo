@@ -46,6 +46,11 @@ pub struct EngineCache(Mutex<Option<(EngineStatus, Instant)>>);
 
 const RETRY_AFTER: Duration = Duration::from_secs(60);
 
+/// How long the first look at the engine may take. On a fresh Mac the system checks
+/// the engine's files the first time they open, before PyTorch is even imported, so
+/// this matches the time a song may take to start the engine.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(180);
+
 impl EngineCache {
     pub fn ready(&self) -> Option<EngineStatus> {
         self.0
@@ -85,12 +90,18 @@ struct Probe {
     reason: Option<String>,
 }
 
+/// The YUE2 // GROOVE and YuE2 releases Aulo is built and tested with. The engine build,
+/// the bridge and the model manifests name the same releases; a test keeps them in step,
+/// so a groove upgrade cannot leave one of them behind.
+pub const GROOVE_VERSION: &str = "1.0.10";
+pub const YUE_VERSION: &str = "0.1.6";
+
 fn parse_probe(bytes: &[u8]) -> Result<EngineStatus, String> {
     let probe: Probe = serde_json::from_slice(bytes).map_err(|_| "Invalid engine reply")?;
     if probe.protocol_version != PROTOCOL_VERSION
         || probe.event != "probe"
-        || probe.engine_version != "1.0.10"
-        || probe.yue_version != "0.1.6"
+        || probe.engine_version != GROOVE_VERSION
+        || probe.yue_version != YUE_VERSION
         || !matches!(
             probe.device.as_deref(),
             Some("cuda") | Some("mps") | Some("cpu")
@@ -265,10 +276,10 @@ pub fn inspect(resources: &Path) -> EngineStatus {
             "Part of Aulo is missing. Reinstall Aulo to fix it.",
         );
     }
-    probe_process(&python, Duration::from_secs(60)).unwrap_or_else(|_| {
+    probe_process(&python, PROBE_TIMEOUT).unwrap_or_else(|_| {
         EngineStatus::unavailable(
             "unavailable",
-            "The music engine could not start. Close and reopen Aulo to try again.",
+            "The music engine could not start. Aulo tries again in a minute, or close and reopen Aulo.",
         )
     })
 }
@@ -297,6 +308,30 @@ pub async fn engine_status(app: tauri::AppHandle) -> Result<EngineStatus, String
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn every_part_of_aulo_names_the_same_groove_and_yue2_releases() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let read = |path: &str| std::fs::read_to_string(root.join(path)).unwrap();
+        let bridge = read("runtime/bridge.py");
+        assert!(bridge.contains(&format!("GROOVE_VERSION = \"{GROOVE_VERSION}\"")));
+        assert!(bridge.contains(&format!("YUE_VERSION = \"{YUE_VERSION}\"")));
+        let build = read("scripts/build_engine.py");
+        assert!(build.contains(&format!("yue2_groove@v{GROOVE_VERSION}\"")));
+        assert!(build.contains(&format!("YuE@yue2-v{YUE_VERSION}\"")));
+        assert!(build.contains(&format!("GROOVE_VERSION = \"{GROOVE_VERSION}\"")));
+        assert!(build.contains(&format!("YUE2_VERSION = \"{YUE_VERSION}\"")));
+        assert!(build.contains(&format!("releases/download/v{GROOVE_VERSION}\"")));
+        let refresh = read("scripts/refresh-model-manifest.py");
+        assert!(refresh.contains(&format!("'coreVersion': '{GROOVE_VERSION}'")));
+        for manifest in [
+            "manifests/music-models.json",
+            "manifests/music-models-gguf.json",
+        ] {
+            let json: serde_json::Value = serde_json::from_str(&read(manifest)).unwrap();
+            assert_eq!(json["coreVersion"], GROOVE_VERSION, "{manifest}");
+        }
+    }
+
     use super::*;
 
     const GOOD: &str = r#"{"protocolVersion":3,"event":"probe","engineVersion":"1.0.10","yueVersion":"0.1.6","device":"mps","backend":"torch"}"#;

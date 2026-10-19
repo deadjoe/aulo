@@ -39,6 +39,7 @@ impl KeepReady {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
+    pub format: crate::FormatVersion,
     /// A system notification when a song finishes or fails while Aulo is in the background.
     pub notify_when_done: bool,
     pub keep_ready: KeepReady,
@@ -49,6 +50,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            format: crate::FormatVersion::CURRENT,
             notify_when_done: true,
             keep_ready: KeepReady::SaveMemory,
             empty_trash_after_days: None,
@@ -151,6 +153,7 @@ mod tests {
     fn settings_round_trip_and_unknown_fields_keep_their_defaults() {
         let dir = tempfile::tempdir().unwrap();
         let chosen = Settings {
+            format: crate::FormatVersion::CURRENT,
             notify_when_done: false,
             keep_ready: KeepReady::Faster,
             empty_trash_after_days: Some(30),

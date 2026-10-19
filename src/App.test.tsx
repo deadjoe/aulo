@@ -128,6 +128,23 @@ describe("create panel", () => {
     expect(screen.getByLabelText("Song description")).toHaveValue("warm piano");
   });
 
+  it("offers a ready example for a first song, only over an empty form", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Try an example" }));
+    const style = screen.getByLabelText("Song description");
+    const lyrics = screen.getByLabelText("Lyrics");
+    const first = (style as HTMLTextAreaElement).value;
+    expect(first).not.toBe("");
+    expect((lyrics as HTMLTextAreaElement).value).toMatch(/\[Chorus\]/);
+    await user.click(screen.getByRole("button", { name: "Another example" }));
+    expect(style).not.toHaveValue(first);
+    await user.type(style, ", extra");
+    expect(
+      screen.queryByRole("button", { name: "Another example" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("keeps advanced styles clean and offers sections and creative controls", async () => {
     const user = userEvent.setup();
     render(<App />);

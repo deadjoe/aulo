@@ -1,0 +1,44 @@
+name: Package Windows app
+
+# Builds the self-contained music engine (CPU-only PyTorch with the GGUF engine's
+# yue2.cpp) and the Aulo installer that carries it. Manual or on version tags, like
+# the macOS package: the engine download is large, so ordinary pushes skip it.
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: npm ci
+      - name: Build the bundled engine
+        run: python scripts/build_engine.py --out src-tauri/engine
+      - name: Check the engine starts without any other Python
+        shell: pwsh
+        run: |
+          $env:PYTHONDONTWRITEBYTECODE = "1"
+          $env:HF_HUB_OFFLINE = "1"
+          Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
+          '{"protocolVersion":3,"operation":"probe"}' |
+            src-tauri/engine/python/python.exe -I runtime/bridge.py
+      - name: Bundle Aulo with the engine
+        run: npm run bundle -- --bundles nsis
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Aulo-windows-x64
+          path: src-tauri/target/release/bundle/nsis/*.exe

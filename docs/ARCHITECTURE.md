@@ -49,6 +49,8 @@ Use a pinned engine version and a versioned capability handshake. The service re
 
 ## Desktop lifecycle and distribution
 
+Aulo's own files (each song's `aulo.json`, `collections.json`, `settings.json`, `saved.json`, `models.json`) carry a `format` number, 1 today; files written before it existed read as 1. A later format change raises it and converts older files. Only one Aulo runs at a time; opening it again brings the open window forward. Quitting or closing the window while a song is being made asks first.
+
 The Tauri host will own the child process lifecycle and recover from crashes. The packaged runtime must not depend on users having Python, Git, or build tools. macOS and Windows need separate tested artifacts. Application, runtime, and model versions may download independently but must obey a tested compatibility manifest.
 
 Do not update a loaded engine while a job is running. Keep the previous working runtime until the replacement passes health checks. Store models and works outside the application bundle. Signing, update verification, and rollback remain future implementation work.

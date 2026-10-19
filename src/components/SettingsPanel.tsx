@@ -156,10 +156,12 @@ function CreatingSection({
   settings,
   onChange,
   notify,
+  warn,
 }: {
   settings: Settings;
   onChange: (next: Settings) => void;
   notify: (text: string) => void;
+  warn: (text: string) => void;
 }) {
   const desktop = desktopModelsAvailable();
   const load = useCallback(
@@ -219,7 +221,7 @@ function CreatingSection({
               void releaseEngine()
                 .then(() => notify("Memory freed."))
                 .catch((e: unknown) =>
-                  notify(problem(e, "Memory couldn’t be freed right now.")),
+                  warn(problem(e, "Memory couldn’t be freed right now.")),
                 )
                 .finally(() => {
                   setFreeing(false);
@@ -241,12 +243,14 @@ function StorageSection({
   songs,
   onDeleted,
   notify,
+  warn,
 }: {
   settings: Settings;
   onChange: (next: Settings) => void;
   songs: Song[];
   onDeleted: (ids: string[]) => void;
   notify: (text: string) => void;
+  warn: (text: string) => void;
 }) {
   const desktop = desktopModelsAvailable();
   const load = useCallback(
@@ -294,14 +298,11 @@ function StorageSection({
               .then((deleted) => {
                 onDeleted(deleted);
                 const left = ids.length - deleted.length;
-                notify(
-                  left === 0
-                    ? "The Trash is empty."
-                    : `${count(left)} couldn’t be deleted. Try again.`,
-                );
+                if (left === 0) notify("The Trash is empty.");
+                else warn(`${count(left)} couldn’t be deleted. Try again.`);
               })
               .catch((e: unknown) => {
-                notify(problem(e, "Some songs couldn’t be deleted."));
+                warn(problem(e, "Some songs couldn’t be deleted."));
               })
               .finally(() => {
                 setEmptying(false);
@@ -362,7 +363,13 @@ function StorageSection({
   );
 }
 
-function ModelsSection({ notify }: { notify: (text: string) => void }) {
+function ModelsSection({
+  notify,
+  warn,
+}: {
+  notify: (text: string) => void;
+  warn: (text: string) => void;
+}) {
   const desktop = desktopModelsAvailable();
   const load = useCallback(
     () =>
@@ -415,7 +422,7 @@ function ModelsSection({ notify }: { notify: (text: string) => void }) {
             void verifyModels(status!.modelRoot!)
               .then(refresh)
               .catch((e: unknown) =>
-                notify(problem(e, "The check couldn’t start.")),
+                warn(problem(e, "The check couldn’t start.")),
               )
           }
         >
@@ -456,7 +463,7 @@ function ModelsSection({ notify }: { notify: (text: string) => void }) {
                 ),
               )
               .catch((e: unknown) =>
-                notify(problem(e, "The music models couldn’t be removed.")),
+                warn(problem(e, "The music models couldn’t be removed.")),
               )
               .finally(() => {
                 setRemoving(false);
@@ -497,7 +504,13 @@ const CREDITS: [string, string][] = [
   ["Bricolage Grotesque, Figtree", "Typefaces. SIL Open Font License."],
 ];
 
-function AboutSection({ notify }: { notify: (text: string) => void }) {
+function AboutSection({
+  notify,
+  warn,
+}: {
+  notify: (text: string) => void;
+  warn: (text: string) => void;
+}) {
   const desktop = desktopModelsAvailable();
   const [version, setVersion] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -529,7 +542,7 @@ function AboutSection({ notify }: { notify: (text: string) => void }) {
                 if (saved) notify("Problem report saved.");
               })
               .catch((e: unknown) =>
-                notify(problem(e, "The report couldn’t be saved.")),
+                warn(problem(e, "The report couldn’t be saved.")),
               )
               .finally(() => setSaving(false));
           }}
@@ -558,6 +571,7 @@ export default function SettingsPanel({
   onDeleted,
   onSettingsChanged,
   notify,
+  warn,
   initialSection = "creating",
 }: {
   songs: Song[];
@@ -565,6 +579,7 @@ export default function SettingsPanel({
   onDeleted: (ids: string[]) => void;
   onSettingsChanged: (settings: Settings) => void;
   notify: (text: string) => void;
+  warn: (text: string) => void;
   initialSection?: Section;
 }) {
   const [section, setSection] = useState<Section>(initialSection);
@@ -585,7 +600,7 @@ export default function SettingsPanel({
     if (!desktopModelsAvailable()) return;
     updateSettings(next).then(onSettingsChanged, (e: unknown) => {
       setSettings(previous);
-      notify(problem(e, "Your settings couldn’t be saved."));
+      warn(problem(e, "Your settings couldn’t be saved."));
     });
   };
   const title = SECTIONS.find(([id]) => id === section)![1];
@@ -623,6 +638,7 @@ export default function SettingsPanel({
                 settings={settings}
                 onChange={change}
                 notify={notify}
+                warn={warn}
               />
             )}
             {section === "storage" && (
@@ -632,11 +648,16 @@ export default function SettingsPanel({
                 songs={songs}
                 onDeleted={onDeleted}
                 notify={notify}
+                warn={warn}
               />
             )}
-            {section === "models" && <ModelsSection notify={notify} />}
+            {section === "models" && (
+              <ModelsSection notify={notify} warn={warn} />
+            )}
             {section === "assistant" && <AssistantSection />}
-            {section === "about" && <AboutSection notify={notify} />}
+            {section === "about" && (
+              <AboutSection notify={notify} warn={warn} />
+            )}
           </div>
         </section>
       </div>

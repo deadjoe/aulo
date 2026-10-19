@@ -43,6 +43,7 @@ function open(section?: Parameters<typeof SettingsPanel>[0]["initialSection"]) {
     onDeleted: vi.fn(),
     onSettingsChanged: vi.fn(),
     notify: vi.fn(),
+    warn: vi.fn(),
   };
   render(<SettingsPanel {...props} initialSection={section} />);
   return props;
@@ -111,7 +112,7 @@ describe("Settings › Creating", () => {
       "aria-checked",
       "true",
     );
-    expect(props.notify).toHaveBeenCalledWith(
+    expect(props.warn).toHaveBeenCalledWith(
       "Aulo couldn’t save your settings.",
     );
   });
@@ -172,7 +173,7 @@ describe("Settings › Storage", () => {
       }),
     );
     expect(props.onDeleted).toHaveBeenCalledWith(["b"]);
-    expect(props.notify).toHaveBeenCalledWith(
+    expect(props.warn).toHaveBeenCalledWith(
       "1 song couldn’t be deleted. Try again.",
     );
   });

@@ -633,6 +633,36 @@ svg {
   font-size: 13px;
   color: var(--muted);
 }
+/* Most people download the models; bringing their own is a quiet side door. */
+.folder-row.quiet {
+  gap: 8px;
+  width: auto;
+  padding: 6px 2px;
+  border: 0;
+  border-radius: 8px;
+  color: var(--muted);
+}
+.folder-row.quiet:hover:not(:disabled) {
+  background: none;
+  color: var(--soft);
+}
+.folder-row.quiet > span {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 6px;
+  align-items: baseline;
+}
+.folder-row.quiet strong {
+  font-size: 13px;
+  font-weight: 500;
+  color: inherit;
+}
+.folder-row.quiet small {
+  margin: 0;
+  color: var(--faint);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
 
 /* Messages and dialogs */
 .secondary.small {
@@ -855,6 +885,9 @@ svg {
 }
 .toast svg {
   color: #4f7a3c;
+}
+.toast.problem > svg:first-child {
+  color: #b5462f;
 }
 .toast .icon-button {
   width: 28px;
@@ -1114,6 +1147,21 @@ svg {
 }
 .describe-card textarea {
   min-height: 120px;
+}
+.example-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: var(--raised);
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+}
+.example-button:hover {
+  background: var(--hover);
 }
 .lyrics-card textarea {
   min-height: 210px;
@@ -2613,6 +2661,35 @@ input[type="range"]:disabled {
 .detail-lyrics {
   margin-top: 40px;
   max-width: 560px;
+}
+/* On a wide window the lyrics sit beside the song instead of under it, so the page
+   is not one narrow column with an empty right half. */
+@media (min-width: 1280px) {
+  .song-detail {
+    display: grid;
+    grid-template-columns: clamp(280px, 24vw, 380px) minmax(0, 620px);
+    column-gap: 72px;
+    align-content: start;
+    align-items: start;
+  }
+  .song-detail > .back-button {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+  .song-detail .detail-hero {
+    grid-template-columns: minmax(0, clamp(280px, 24vw, 380px));
+    gap: 24px;
+  }
+  .song-detail .cover-button-lg .cover {
+    --size: clamp(280px, 24vw, 380px);
+  }
+  .song-detail .detail-actions {
+    flex-wrap: wrap;
+  }
+  .song-detail .detail-lyrics {
+    margin-top: 10px;
+    max-width: none;
+  }
 }
 .detail-lyrics header {
   display: flex;

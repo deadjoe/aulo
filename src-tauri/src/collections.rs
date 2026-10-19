@@ -34,6 +34,8 @@ pub struct Playlist {
 #[serde(rename_all = "camelCase")]
 pub struct Collections {
     #[serde(default)]
+    pub format: crate::FormatVersion,
+    #[serde(default)]
     pub workspaces: Vec<Workspace>,
     #[serde(default)]
     pub playlists: Vec<Playlist>,

@@ -177,6 +177,8 @@ impl Drop for BusyGuard {
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SavedModels {
+    #[serde(default)]
+    format: crate::FormatVersion,
     manifest_id: String,
     model_root: PathBuf,
     /// Size and modification time of every file when its checksum last passed.
@@ -233,6 +235,7 @@ fn write_selection(
 ) -> Result<(), String> {
     fs::create_dir_all(base).map_err(io_error)?;
     let saved = SavedModels {
+        format: crate::FormatVersion::CURRENT,
         manifest_id: manifest_id.into(),
         model_root: root.to_path_buf(),
         verified_files,

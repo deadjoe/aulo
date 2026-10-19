@@ -8,6 +8,8 @@ The engine ships inside Aulo. `scripts/build_engine.py` (`npm run engine`) produ
 
 `npm run bundle` builds the app with `src-tauri/tauri.bundle.conf.json`, which adds the engine as an app resource (`Aulo.app/Contents/Resources/engine`). A person who installs Aulo never installs Python or anything else; after the music models are prepared, Create works. `.github/workflows/package-macos.yml` builds the engine and the DMG on demand and on version tags.
 
+Upgrading GROOVE or YuE2 touches the engine build, the bridge, the model manifests and the probe check. `engine.rs` names the expected releases once (`GROOVE_VERSION`, `YUE_VERSION`), and the test `every_part_of_aulo_names_the_same_groove_and_yue2_releases` fails until every other place names the same ones. `.github/workflows/package-windows.yml` builds the Windows engine and installer the same way as the macOS package; it runs on demand and on version tags, and has not been run yet.
+
 ## Discovery and readiness
 
 The Rust `engine_status` command uses only the engine inside the app bundle. Debug builds may instead use an absolute `AULO_DEV_PYTHON` interpreter, or an engine built into `src-tauri/engine`. Release builds ignore both. No interpreter selector, command field, or dependency configuration is exposed to users. There is no PATH search or shell invocation, and the engine never writes bytecode into the signed bundle.
@@ -18,7 +20,7 @@ The probe checks the installed GROOVE 1.0.10 and YuE2 0.1.6 versions, imports th
 - On CUDA without a usable FlashAttention kernel, GROOVE's eager decoder is used, as in `webui/runtime.effective_backend`.
 - A computer whose only option is the CPU is reported as unsupported; Aulo does not offer multi-hour CPU generation.
 
-A successful probe is cached for the session. Creation requires both a ready engine and verified models; `creation_status` reports which one is missing in plain language. The native host enforces a probe timeout, limits protocol output, checks the versioned reply, and reaps failed or timed-out children.
+A successful probe is cached for the session. Creation requires both a ready engine and verified models; `creation_status` reports which one is missing in plain language. The native host enforces a probe timeout (three minutes, because a fresh Mac checks the engine's files the first time they open), and the app looks again every minute while the engine is not ready. It also limits protocol output, checks the versioned reply, and reaps failed or timed-out children.
 
 GGUF engine binaries sit beside the interpreter in `engine/yue2cpp`; the GGUF model files are downloaded ready-made (see Engine plan).
 
