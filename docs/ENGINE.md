@@ -8,7 +8,7 @@ The engine ships inside Aulo. `scripts/build_engine.py` (`npm run engine`) produ
 
 `npm run bundle` builds the app with `src-tauri/tauri.bundle.conf.json`, which adds the engine as an app resource (`Aulo.app/Contents/Resources/engine`). A person who installs Aulo never installs Python or anything else; after the music models are prepared, Create works. `.github/workflows/package-macos.yml` builds the engine and the DMG on demand and on version tags.
 
-Upgrading GROOVE or YuE2 touches the engine build, the bridge, the model manifests and the probe check. `engine.rs` names the expected releases once (`GROOVE_VERSION`, `YUE_VERSION`), and the test `every_part_of_aulo_names_the_same_groove_and_yue2_releases` fails until every other place names the same ones. `.github/workflows/package-windows.yml` builds the Windows engine and installer the same way as the macOS package; it runs on demand and on version tags, and has not been run yet.
+Upgrading GROOVE or YuE2 touches the engine build, the bridge, the model manifests and the probe check. `engine.rs` names the expected releases once (`GROOVE_VERSION`, `YUE_VERSION`), and the test `every_part_of_aulo_names_the_same_groove_and_yue2_releases` fails until every other place names the same ones. `.github/workflows/package-windows.yml` builds the Windows engine and installer the same way as the macOS package; it runs on demand and on version tags. Its first run (2026-10-19) built the engine, passed the probe, found yue2.cpp among the resources and produced an installer of about 680 MB; the installer has not yet been tried on a real PC.
 
 ## Discovery and readiness
 
