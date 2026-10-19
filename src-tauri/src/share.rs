@@ -13,8 +13,10 @@ use tauri::Manager;
 use crate::audio::Tags;
 use crate::songs::{export_audio, finished_audio, AudioFormat, SongService};
 
-/// Where the share sheet points from, in the page's CSS pixels.
+/// Where the share sheet points from, in the page's CSS pixels. Only macOS's share
+/// sheet points at anything; elsewhere it is centred.
 #[derive(Clone, Copy, Debug, Deserialize)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub struct Anchor {
     pub x: f64,
     pub y: f64,

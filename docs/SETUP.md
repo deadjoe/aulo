@@ -49,4 +49,4 @@ The model license is shown as CC BY-NC 4.0 (non-commercial), with a fixed offici
 
 Targets: Apple Silicon with 8 GB of memory or more (16 GB and up on the PyTorch engine, below that on the GGUF engine), and x86-64 Windows with an NVIDIA GPU of at least 8 GB (GGUF engine only). These do not guarantee performance or compatibility. No AMD, Intel GPU, CPU-only, Intel Mac, or Windows ARM support is promised.
 
-Models can be prepared independently of engine compatibility; this release never enables generation. The production runtime installer must gate unsupported hardware before an automatic full setup. Memory allocation limits and available memory must be checked by the core before generation. Runtime choices belong to the installer/core, not to user-facing dropdowns.
+Only a computer the engine plan accepts is offered the music models, and only the set its engine runs. Creating needs verified models and a ready engine. Runtime choices belong to the native plan and the engine, never to settings people see.

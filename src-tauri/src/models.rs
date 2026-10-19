@@ -1,4 +1,5 @@
 //! Model preparation is independent of runtime readiness. Only pinned data files are fetched.
+use crate::Held;
 use reqwest::{
     blocking::Client,
     header::{CONTENT_RANGE, RANGE},
@@ -135,7 +136,7 @@ struct Inner {
 pub struct ModelManager(Arc<Inner>);
 impl ModelManager {
     fn update(&self, f: impl FnOnce(&mut SetupStatus)) {
-        if let Some(s) = self.0.status.lock().unwrap().as_mut() {
+        if let Some(s) = self.0.status.held().as_mut() {
             f(s);
         }
     }
@@ -159,7 +160,7 @@ impl ModelManager {
         status.phase = "checking".into();
         status.message = "Checking the music models…".into();
         status.model_root = Some(root.to_string_lossy().into_owned());
-        *self.0.status.lock().unwrap() = Some(status);
+        *self.0.status.held() = Some(status);
         Ok(())
     }
     fn cancelled(&self) -> bool {
@@ -362,7 +363,7 @@ pub async fn model_plan(app: tauri::AppHandle) -> Result<ModelPlan, String> {
 }
 /// The verified model folder, if model preparation has completed for this manifest.
 pub fn verified_root(app: &tauri::AppHandle, manager: &ModelManager) -> Option<PathBuf> {
-    let mut state = manager.0.status.lock().unwrap();
+    let mut state = manager.0.status.held();
     if state.is_none() {
         let m = manifest().ok()?;
         *state = Some(restore_status(&base_path(app).ok()?, &m));
@@ -386,7 +387,7 @@ pub fn report_lines(app: &tauri::AppHandle, manager: &ModelManager) -> Vec<(Stri
         // Fills in the state on first use, as Settings would.
         let _ = verified_root(app, manager);
     }
-    let status = manager.0.status.lock().unwrap().clone();
+    let status = manager.0.status.held().clone();
     let mut lines = Vec::new();
     lines.push((
         "Set for this computer".into(),
@@ -477,7 +478,7 @@ pub fn model_status(
     app: tauri::AppHandle,
     manager: tauri::State<ModelManager>,
 ) -> Result<SetupStatus, String> {
-    let mut state = manager.0.status.lock().unwrap();
+    let mut state = manager.0.status.held();
     if state.is_none() {
         let m = manifest()?;
         let base = base_path(&app)?;
@@ -724,7 +725,7 @@ pub async fn remove_models(
     .map_err(|e| e.to_string())?;
     // Whatever happened, read the state back from disk: after a partial removal the
     // models must not be considered ready, and after a refusal they still are.
-    *manager.0.status.lock().unwrap() = m.map(|m| restore_status(&base_for_status, &m));
+    *manager.0.status.held() = m.map(|m| restore_status(&base_for_status, &m));
     result.map(|(kept, _)| RemovedModels {
         kept_folder: kept.map(|p| p.to_string_lossy().into_owned()),
     })
@@ -889,6 +890,11 @@ fn transfer(
 ) -> Result<(), String> {
     let mut offset = fs::metadata(partial).map_or(0, |m| m.len());
     let mut failures = 0;
+    // Hugging Face answers each request with a redirect to its file servers. The address
+    // it redirects to is reused for the next ranges, saving a round trip per 8 MiB; it
+    // expires, and then the next request goes through Hugging Face again. Every byte is
+    // still checked against the pinned SHA-256.
+    let mut source: Option<reqwest::Url> = None;
     while offset < file.bytes {
         if manager.cancelled() {
             return Err("Paused".into());
@@ -897,7 +903,7 @@ fn transfer(
             "downloading",
             "Downloading. You can pause and come back later.",
         );
-        let result = transfer_range(client, file, partial, manager, base, offset);
+        let result = transfer_range(client, file, partial, manager, base, offset, &mut source);
         match result {
             Ok(next) if next > offset => {
                 offset = next;
@@ -908,7 +914,10 @@ fn transfer(
                 if manager.cancelled() {
                     return Err("Paused".into());
                 }
-                failures += 1;
+                source = None;
+                // A slow or flaky connection that still moves forward is not a failure.
+                let reached = fs::metadata(partial).map_or(0, |m| m.len());
+                failures = if reached > offset { 1 } else { failures + 1 };
                 if failures >= 3 {
                     return Err(error);
                 }
@@ -926,6 +935,9 @@ fn transfer(
     }
     Ok(())
 }
+/// Bytes asked for at a time.
+const RANGE_BYTES: u64 = 8 * 1024 * 1024;
+
 fn transfer_range(
     client: &Client,
     file: &ModelFile,
@@ -933,10 +945,37 @@ fn transfer_range(
     manager: &ModelManager,
     base: u64,
     offset: u64,
+    source: &mut Option<reqwest::Url>,
 ) -> Result<u64, String> {
-    let end = (offset + 8 * 1024 * 1024 - 1).min(file.bytes - 1);
+    transfer_range_sized(
+        client,
+        file,
+        partial,
+        manager,
+        base,
+        offset,
+        source,
+        RANGE_BYTES,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn transfer_range_sized(
+    client: &Client,
+    file: &ModelFile,
+    partial: &Path,
+    manager: &ModelManager,
+    base: u64,
+    offset: u64,
+    source: &mut Option<reqwest::Url>,
+    range: u64,
+) -> Result<u64, String> {
+    let end = (offset + range - 1).min(file.bytes - 1);
+    let url = source
+        .clone()
+        .map_or_else(|| file.url.clone(), |u| u.to_string());
     let mut response = client
-        .get(&file.url)
+        .get(&url)
         .header(RANGE, format!("bytes={offset}-{end}"))
         .header("Accept-Encoding", "identity")
         .send()
@@ -958,6 +997,7 @@ fn transfer_range(
     } else if response.status() == StatusCode::OK {
         false
     } else {
+        *source = None;
         return Err(format!(
             "The download isn’t available right now (error {}). Try again later.",
             response.status().as_u16()
@@ -966,6 +1006,7 @@ fn transfer_range(
     if manager.cancelled() {
         return Err("Paused".into());
     }
+    *source = Some(response.url().clone());
     let mut writer = OpenOptions::new()
         .create(true)
         .write(true)

@@ -775,6 +775,7 @@ mod tests {
                 gpu_memory_gi_b: Some(8.0),
                 gpu_driver: Some("566.36".into()),
                 data_path: String::new(),
+                blocker: None,
             },
             plan: Ok(crate::plan::Plan {
                 engine: crate::plan::Engine::Gguf,

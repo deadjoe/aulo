@@ -1,6 +1,7 @@
 //! Saved lyrics and saved styles: the person's own writing, kept so it can be
 //! picked again. Stored in `<app-data>/saved.json`, replaced atomically.
 
+use crate::Held;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -135,7 +136,7 @@ fn change<T>(
 ) -> Result<T, String> {
     let base = base(app)?;
     let store = app.state::<SavedStore>();
-    let mut current = store.0.lock().unwrap();
+    let mut current = store.0.held();
     let mut next = current.clone().unwrap_or_else(|| load(&base));
     let result = f(&mut next)?;
     save(&base, &next).map_err(|_| NOT_SAVED.to_string())?;
@@ -170,7 +171,7 @@ fn new_id() -> String {
 pub fn list_saved(app: tauri::AppHandle, kind: Kind) -> Result<Vec<Saved>, String> {
     let base = base(&app)?;
     let store = app.state::<SavedStore>();
-    let mut current = store.0.lock().unwrap();
+    let mut current = store.0.held();
     let file = current.get_or_insert_with(|| load(&base));
     Ok(file.list(kind).to_vec())
 }

@@ -1,5 +1,6 @@
 //! One long-lived engine process: spawn, wait until ready, send commands, read events.
 use crate::songs::{parse_event, EngineEvent};
+use crate::Held;
 use std::{
     io::{BufRead, BufReader, Read, Write},
     process::{Child, ChildStdin, Command},
@@ -101,11 +102,11 @@ impl EngineProcess {
     /// Ask for a clean exit, then stop the process if it does not leave in time.
     pub fn shutdown(self, grace: Duration) {
         let _ = self.send(&serde_json::json!({"operation": "shutdown"}));
-        self.input.lock().unwrap().take();
+        self.input.held().take();
         let deadline = Instant::now() + grace;
         while Instant::now() < deadline {
             if !self.alive() {
-                let _ = self.child.lock().unwrap().wait();
+                let _ = self.child.held().wait();
                 return;
             }
             std::thread::sleep(Duration::from_millis(100));
@@ -114,7 +115,7 @@ impl EngineProcess {
     }
 
     pub fn kill(&self) {
-        let mut child = self.child.lock().unwrap();
+        let mut child = self.child.held();
         let _ = child.kill();
         let _ = child.wait();
     }
@@ -126,7 +127,7 @@ pub fn send_line(
 ) -> Result<(), String> {
     let mut line = serde_json::to_vec(value).map_err(|e| e.to_string())?;
     line.push(b'\n');
-    let mut input = input.lock().unwrap();
+    let mut input = input.held();
     let stdin = input.as_mut().ok_or("The music engine is not running.")?;
     stdin
         .write_all(&line)
@@ -150,6 +151,15 @@ impl KeepAwake {
                 .ok();
             Self(child)
         }
+        #[cfg(target_os = "windows")]
+        {
+            use windows::Win32::System::Power::{
+                SetThreadExecutionState, ES_CONTINUOUS, ES_SYSTEM_REQUIRED,
+            };
+            // Held by this thread until it says otherwise (in `drop`, on the same thread).
+            // SAFETY: a plain flag call with no pointers.
+            let _ = unsafe { SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED) };
+        }
         #[cfg(not(target_os = "macos"))]
         Self(None)
     }
@@ -157,6 +167,12 @@ impl KeepAwake {
 
 impl Drop for KeepAwake {
     fn drop(&mut self) {
+        #[cfg(target_os = "windows")]
+        {
+            use windows::Win32::System::Power::{SetThreadExecutionState, ES_CONTINUOUS};
+            // SAFETY: as in `start`.
+            let _ = unsafe { SetThreadExecutionState(ES_CONTINUOUS) };
+        }
         if let Some(child) = self.0.as_mut() {
             let _ = child.kill();
             let _ = child.wait();

@@ -46,6 +46,47 @@ export function formatBytes(bytes: number): string {
   return `${(bytes / 1_000_000_000).toFixed(2)} GB`;
 }
 
+export interface Sample {
+  at: number;
+  bytes: number;
+}
+
+/**
+ * Download speed and time left from recent progress samples (oldest first), over about
+ * the last 20 seconds. Null until there is enough to say anything honest.
+ */
+export function downloadPace(
+  samples: Sample[],
+  total: number,
+): { bytesPerSecond: number; secondsLeft: number } | null {
+  const last = samples[samples.length - 1];
+  const first = samples.find((s) => last && last.at - s.at <= 20_000);
+  if (!first || !last || last.at - first.at < 3_000) return null;
+  const bytesPerSecond =
+    ((last.bytes - first.bytes) * 1000) / (last.at - first.at);
+  if (bytesPerSecond <= 0) return null;
+  return {
+    bytesPerSecond,
+    secondsLeft: Math.max(0, total - last.bytes) / bytesPerSecond,
+  };
+}
+
+/** "12.4 MB/s · About 9 min left" */
+export function paceText(pace: {
+  bytesPerSecond: number;
+  secondsLeft: number;
+}) {
+  const speed = `${(pace.bytesPerSecond / 1_000_000).toFixed(1)} MB/s`;
+  const minutes = Math.ceil(pace.secondsLeft / 60);
+  const left =
+    pace.secondsLeft < 60
+      ? "Less than a minute left"
+      : minutes < 90
+        ? `About ${minutes} min left`
+        : `About ${Math.round(minutes / 60)} h left`;
+  return `${speed} · ${left}`;
+}
+
 export const openModelLicense = () => invoke<void>("open_model_license");
 /** Settings › Remove music models. A folder of the person's own is kept. */
 export const removeModels = () =>

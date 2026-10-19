@@ -75,7 +75,7 @@ On Windows, the graphics card, its own memory and the driver version come from `
 - Each stage reports at least every 100 tokens or render step. Ten minutes without any event is treated as a hang: the process is stopped and the song marked failed with a plain message. A crashed process is detected the same way and restarted for the next song.
 - Stop sends `cancel` for that song; if the engine has not stopped after 30 seconds, the process is stopped. A `cancel` that arrives before its `generate` has started is kept and applied when that song begins.
 - The interpreter runs with `-I -B -X utf8`: isolated from the computer's Python settings (which also makes it ignore `PYTHON*` variables), never writing bytecode into the read-only engine, and using UTF-8 on every platform.
-- When Aulo quits, the engine is stopped. While a song is being made on macOS, `caffeinate -i` keeps the computer from idle sleep.
+- When Aulo quits, the engine is stopped. While a song is being made, the computer is kept from idle sleep: `caffeinate -i` on macOS, `SetThreadExecutionState` on Windows. Closing the window or quitting while a song is being made asks first, and a second launch brings the open window forward instead of starting another engine.
 - The engine's stderr is appended to `<app-data>/logs/engine.log`, rotated at 5 MB.
 
 **Failures.** The bridge sends a reason with every failed song (`failure_reason`, matched on the error text of GROOVE, PyTorch and yue2.cpp): `lyrics_too_long`, `out_of_memory`, `graphics_driver`, `models_damaged`, `engine_damaged`, `folder_name` or `unknown`. The song service adds its own (`engine_start`, `engine_stopped`, `engine_hang`, `models_unverified`). Each reason has its own message saying what to do (`songs::failure_message`), and the reason is kept with the song for the problem report. A `models_damaged` failure marks the models as needing a check, so the next song waits for Settings › Music models.
@@ -90,6 +90,5 @@ Works are folders under `<app-data>/library/<id>/` with an atomically replaced `
 - Signing and notarizing every binary in the bundled engine.
 - File-level delta updates, so an app update downloads only changed files and the engine layer is reused.
 - Windows device validation of the GGUF and PyTorch paths through Aulo.
-- Keep-awake on Windows (macOS uses `caffeinate`).
 - Cover and edit flows.
 - Signed distribution, updates, and rollback.

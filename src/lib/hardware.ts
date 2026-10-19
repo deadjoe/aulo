@@ -9,6 +9,8 @@ export interface Hardware {
   gpu: string | null;
   gpuMemoryGiB: number | null;
   dataPath: string;
+  /** Why this computer cannot make songs, from the native engine plan. */
+  blocker?: string | null;
 }
 export interface Assessment {
   status: "candidate" | "limited" | "unsupported" | "unknown";
@@ -17,7 +19,9 @@ export interface Assessment {
   profile: "apple-silicon" | "windows-nvidia" | null;
 }
 
-// Eligibility is a setup recommendation, never proof that the runtime works.
+// Eligibility is a setup recommendation, never proof that the runtime works. Whether
+// this computer can make songs is decided by the native side (src-tauri/src/plan.rs) and
+// arrives as `blocker`; nothing here repeats that rule.
 export function assessHardware(h: Hardware | null): Assessment {
   if (!h)
     return {
@@ -27,40 +31,41 @@ export function assessHardware(h: Hardware | null): Assessment {
         "Open the Aulo app to see whether this computer can make music.",
       profile: null,
     };
-  if (h.platform === "macos" && h.arch === "aarch64") {
-    // The same rule as src-tauri/src/plan.rs: 8 GB is enough, with shorter songs.
-    if (Math.round(h.memoryGiB) < 8)
+  const mac = h.platform === "macos" && h.arch === "aarch64";
+  const pc = h.platform === "windows" && h.arch === "x86_64";
+  if (h.blocker) {
+    const lookAround = `${h.blocker} You can still look around.`;
+    if (pc && !h.gpu)
       return {
-        status: "limited",
-        title: "This Mac has less memory than Aulo needs",
-        description:
-          "Aulo needs a Mac with Apple silicon and at least 8 GB of memory to make music. You can still look around.",
+        status: "unknown",
+        title: "Aulo couldn’t find an NVIDIA graphics card",
+        description: h.blocker,
         profile: null,
       };
+    if (pc || mac)
+      return {
+        status: "limited",
+        title: pc
+          ? "This graphics card has too little memory"
+          : "This Mac has less memory than Aulo needs",
+        description: lookAround,
+        profile: null,
+      };
+    return {
+      status: "unsupported",
+      title: "Aulo can’t make music on this computer yet",
+      description: lookAround,
+      profile: null,
+    };
+  }
+  if (mac)
     return {
       status: "candidate",
       title: "Your Mac looks ready for Aulo",
       description: "It has the chip and memory Aulo needs to make music.",
       profile: "apple-silicon",
     };
-  }
-  if (h.platform === "windows" && h.arch === "x86_64") {
-    if (!h.gpu || h.gpuMemoryGiB === null)
-      return {
-        status: "unknown",
-        title: "Aulo couldn’t find an NVIDIA graphics card",
-        description:
-          "On Windows, Aulo makes music with an NVIDIA graphics card. If this PC has one, update its driver and check again.",
-        profile: null,
-      };
-    if (h.gpuMemoryGiB < 7.5)
-      return {
-        status: "limited",
-        title: "This graphics card has too little memory",
-        description:
-          "Aulo needs an NVIDIA graphics card with at least 8 GB of memory. You can still look around.",
-        profile: null,
-      };
+  if (pc)
     return {
       status: "candidate",
       title: "Your PC looks ready for Aulo",
@@ -68,7 +73,6 @@ export function assessHardware(h: Hardware | null): Assessment {
         "It has an NVIDIA graphics card with enough memory to make music.",
       profile: "windows-nvidia",
     };
-  }
   return {
     status: "unsupported",
     title: "Aulo can’t make music on this computer yet",

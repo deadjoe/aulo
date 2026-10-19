@@ -140,7 +140,7 @@ fn ignored_range_restarts_instead_of_appending_duplicate_bytes() {
     f.url = url;
     let state = manager(temp.path(), f.bytes);
     assert_eq!(
-        transfer_range(&client(), &f, &part, &state, 0, 5).unwrap(),
+        transfer_range(&client(), &f, &part, &state, 0, 5, &mut None).unwrap(),
         11
     );
     join.join().unwrap();
@@ -154,7 +154,16 @@ fn unexpected_range_never_modifies_existing_partial() {
     let mut f = fixture(b"hello world");
     let (url, join) = server("HTTP/1.1 206 Partial Content\r\nContent-Range: bytes 0-5/11\r\nContent-Length: 6\r\nConnection: close\r\n\r\n world".into(), "range: bytes=5-10");
     f.url = url;
-    assert!(transfer_range(&client(), &f, &part, &manager(temp.path(), f.bytes), 0, 5).is_err());
+    assert!(transfer_range(
+        &client(),
+        &f,
+        &part,
+        &manager(temp.path(), f.bytes),
+        0,
+        5,
+        &mut None
+    )
+    .is_err());
     join.join().unwrap();
     assert_eq!(fs::read(&part).unwrap(), b"hello");
 }
@@ -467,4 +476,52 @@ fn windows_models_always_get_a_path_yue2cpp_can_open() {
     // Other systems open any path.
     let mac = Path::new("/Users/张三/Library/Application Support/studio.aulo.desktop/models");
     assert_eq!(models_home_for(mac, false, None), mac);
+}
+
+#[test]
+fn the_file_server_a_download_is_sent_to_is_used_for_the_next_ranges() {
+    let socket = TcpListener::bind("127.0.0.1:0").unwrap();
+    let host = format!("http://{}", socket.local_addr().unwrap());
+    let cdn = format!("{host}/cdn/model");
+    let join = {
+        let cdn = cdn.clone();
+        thread::spawn(move || {
+            let mut paths = Vec::new();
+            for reply in [
+                format!("HTTP/1.1 302 Found\r\nLocation: {cdn}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"),
+                "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes 0-4/11\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello".into(),
+                "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes 5-10/11\r\nContent-Length: 6\r\nConnection: close\r\n\r\n world".into(),
+            ] {
+                let (mut stream, _) = socket.accept().unwrap();
+                let mut request = Vec::new();
+                let mut byte = [0u8; 1];
+                while !request.ends_with(b"\r\n\r\n") {
+                    stream.read_exact(&mut byte).unwrap();
+                    request.push(byte[0]);
+                }
+                let text = String::from_utf8_lossy(&request).into_owned();
+                paths.push(text.split_whitespace().nth(1).unwrap().to_string());
+                stream.write_all(reply.as_bytes()).unwrap();
+            }
+            paths
+        })
+    };
+    let temp = tempfile::tempdir().unwrap();
+    let part = temp.path().join("model.part");
+    let mut f = fixture(b"hello world");
+    f.url = format!("{host}/model");
+    let state = manager(temp.path(), f.bytes);
+    let mut source = None;
+    // Small ranges for the test: the first request is redirected, the second is not.
+    assert_eq!(
+        transfer_range_sized(&client(), &f, &part, &state, 0, 0, &mut source, 5).unwrap(),
+        5
+    );
+    assert_eq!(source.as_ref().map(|u| u.to_string()), Some(cdn));
+    assert_eq!(
+        transfer_range_sized(&client(), &f, &part, &state, 0, 5, &mut source, 6).unwrap(),
+        11
+    );
+    assert_eq!(join.join().unwrap(), ["/model", "/cdn/model", "/cdn/model"]);
+    assert_eq!(fs::read(&part).unwrap(), b"hello world");
 }

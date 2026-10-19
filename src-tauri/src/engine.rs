@@ -1,4 +1,5 @@
 //! Private engine discovery and a bounded, offline compatibility handshake.
+use crate::Held;
 use serde::{Deserialize, Serialize};
 use std::{
     io::{Read, Write},
@@ -57,14 +58,14 @@ impl EngineCache {
 
     /// A result that is still good to reuse, if there is one.
     pub fn reusable(&self, now: Instant) -> Option<EngineStatus> {
-        let cached = self.0.lock().unwrap();
+        let cached = self.0.held();
         let (status, at) = cached.as_ref()?;
         let lasting = matches!(status.state, "ready" | "unsupported");
         (lasting || now.duration_since(*at) < RETRY_AFTER).then(|| status.clone())
     }
 
     pub fn store(&self, status: EngineStatus, at: Instant) {
-        *self.0.lock().unwrap() = Some((status, at));
+        *self.0.held() = Some((status, at));
     }
 }
 

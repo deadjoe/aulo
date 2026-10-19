@@ -2,6 +2,7 @@
 //! Everything has a default that is right for most people, so a missing or
 //! unreadable file simply means "the defaults".
 
+use crate::Held;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -93,7 +94,7 @@ fn base(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 
 impl SettingsStore {
     pub fn get(&self, app: &tauri::AppHandle) -> Settings {
-        let mut current = self.0.lock().unwrap();
+        let mut current = self.0.held();
         if current.is_none() {
             *current = Some(base(app).map(|b| load(&b)).unwrap_or_default());
         }
@@ -121,7 +122,7 @@ pub fn update_settings(app: tauri::AppHandle, settings: Settings) -> Result<Sett
         "Aulo couldn’t save your settings. Make sure your disk has free space, then try again."
             .to_string()
     })?;
-    *app.state::<SettingsStore>().0.lock().unwrap() = Some(settings.clone());
+    *app.state::<SettingsStore>().0.held() = Some(settings.clone());
     let songs = app.state::<crate::songs::SongService>();
     songs.apply_settings(&settings);
     songs.empty_expired_trash(&app);
