@@ -62,7 +62,8 @@ export const EMPTY_COLLECTIONS: Collections = {
 };
 export interface CreationStatus {
   ready: boolean;
-  blocker: "models" | "engine" | "unsupported" | "ready" | "preview";
+  blocker:
+    "models" | "engine" | "unsupported" | "preparing" | "ready" | "preview";
   message: string;
 }
 
@@ -146,6 +147,8 @@ export const shareSong = (
   anchor: ShareAnchor,
   cover: number[] | null = null,
 ) => invoke<void>("share_song", { id, title, anchor, cover });
+/** Ready the music models for this computer's engine, once (GGUF only). */
+export const prepareEngine = () => invoke<void>("prepare_engine");
 export const revealSong = (id: string) => invoke<void>("reveal_song", { id });
 export const appVersion = async () => {
   const { getVersion } = await import("@tauri-apps/api/app");

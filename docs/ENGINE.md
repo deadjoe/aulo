@@ -40,6 +40,21 @@ YuE2 has no instrumental switch, so the UI says that some humming can still appe
 
 The engine reports real stages (preparing, writing, performing, rendering, mixing, saving) and NAR/VAE step counts. The interface does not show them: like Suno, it shows a spinner on the song's cover and "Creating…", because stage names mean nothing to the people Aulo is for. The stages remain in each record for diagnostics and the watchdog. Completed output must contain decodable, nonempty audio, and artifacts are flushed before the pending marker is removed. Cancelled and failed runs keep a pending marker with their state.
 
+## Engine plan
+
+Aulo decides the engine from the hardware, never from a person's choice (`src-tauri/src/plan.rs`). The rule is evaluated the same way on every start, since a computer's hardware does not change:
+
+| Computer                               | Engine                                                                                              |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Mac, Apple silicon, 16 GB or more      | PyTorch on MPS (GROOVE's reference engine)                                                          |
+| Mac, Apple silicon, 8–15 GB            | GGUF Q8_0 on Metal; 8 GB machines get GROOVE's 12 288-token context (songs up to about 4.9 minutes) |
+| Windows, NVIDIA card with 8 GB or more | GGUF Q8_0 on CUDA, the same small context on 8 GB cards; Windows uses only this engine              |
+| Anything else                          | Not supported, said plainly in setup                                                                |
+
+The bridge receives the plan as `AULO_ENGINE` (and `YUE2_GROOVE_GGUF_MAX_SEQ` for the small context) and runs exactly that engine; if the GGUF binaries are missing it reports a damaged install rather than switching engines. Without a plan (development) it falls back to GROOVE's `BACKEND=auto`. Development builds can force an engine with `AULO_FORCE_ENGINE=gguf|torch`.
+
+The GGUF engine's binaries are GROOVE's pinned yue2.cpp release (`e8b39f7`), fetched and checksum-verified by `scripts/build_engine.py` into `engine/yue2cpp`. Before the first song, the setup guide (or the app, if setup was skipped) runs GROOVE's one-time `gguf_engine.prepare`: it converts and quantises the downloaded checkpoints into `<app-data>/models/gguf` (about 4.3 GB; it needs about 12 GB free while converting) and Aulo records it in `aulo-prepared.json`. Until then the creation status is `preparing`.
+
 ## Song service
 
 `src-tauri/src/songs.rs` owns one queue, and `src-tauri/src/runner.rs` one resident engine process:

@@ -28,12 +28,13 @@ export function assessHardware(h: Hardware | null): Assessment {
       profile: null,
     };
   if (h.platform === "macos" && h.arch === "aarch64") {
-    if (h.memoryGiB < 31)
+    // The same rule as src-tauri/src/plan.rs: 8 GB is enough, with shorter songs.
+    if (Math.round(h.memoryGiB) < 8)
       return {
         status: "limited",
         title: "This Mac has less memory than Aulo needs",
         description:
-          "Aulo needs a Mac with Apple silicon and at least 32 GB of memory to make music. You can still look around.",
+          "Aulo needs a Mac with Apple silicon and at least 8 GB of memory to make music. You can still look around.",
         profile: null,
       };
     return {

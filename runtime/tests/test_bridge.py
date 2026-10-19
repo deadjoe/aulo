@@ -106,6 +106,47 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(bridge.select_backend("mps", adapter, gguf), "torch")
         self.assertIsNone(bridge.select_backend("cpu", adapter, gguf))
 
+    def test_the_planned_engine_is_used_and_never_swapped(self):
+        adapter, gguf = Mock(), Mock()
+        gguf.auto_backend.return_value = ("torch", "")
+        gguf.available.return_value = True
+        self.assertEqual(bridge.select_backend("mps", adapter, gguf, "gguf"), "gguf")
+        self.assertEqual(bridge.select_backend("cpu", adapter, gguf, "gguf"), "gguf")
+        # Missing yue2.cpp binaries are reported, not replaced by another engine.
+        gguf.available.return_value = False
+        self.assertIsNone(bridge.select_backend("mps", adapter, gguf, "gguf"))
+        gguf.auto_backend.return_value = ("gguf", "small card")
+        self.assertEqual(bridge.select_backend("mps", adapter, gguf, "torch"), "torch")
+        self.assertIsNone(bridge.select_backend("cpu", adapter, gguf, "torch"))
+        gguf.auto_backend.assert_not_called()
+
+    def test_prepare_requests_name_an_absolute_model_folder(self):
+        self.assertEqual(bridge.validate_request(
+            {"protocolVersion": 3, "operation": "prepare", "modelRoot": "/data/models"}),
+            "prepare")
+        for request in [{"protocolVersion": 3, "operation": "prepare"},
+                        {"protocolVersion": 3, "operation": "prepare", "modelRoot": "models"},
+                        {"protocolVersion": 3, "operation": "prepare", "modelRoot": "/m", "x": 1},
+                        {"protocolVersion": 3, "operation": "probe", "modelRoot": "/m"}]:
+            with self.assertRaises(ValueError):
+                bridge.validate_request(request)
+
+    def test_prepare_converts_once_for_gguf_and_does_nothing_for_pytorch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "YuE2-3B").mkdir()
+            (root / "YuE2-Vae").mkdir()
+            gguf = Mock()
+            report = Mock()
+            with patch.dict(sys.modules, {"yue2_groove": types.SimpleNamespace(gguf_engine=gguf)}):
+                bridge.prepare({"backend": "gguf"}, {"modelRoot": directory}, report)
+                bridge.prepare({"backend": "torch"}, {"modelRoot": directory}, report)
+                with self.assertRaises(RuntimeError):
+                    bridge.prepare({"backend": None}, {"modelRoot": directory}, report)
+            gguf.prepare.assert_called_once()
+            self.assertEqual(gguf.prepare.call_args.args[0], root.resolve() / "YuE2-3B")
+            self.assertEqual([c.args[0] for c in report.call_args_list], ["prepared", "prepared"])
+
     def test_error_protocol_is_clean_and_exit_is_nonzero(self):
         result = subprocess.run([sys.executable, "-I", str(BRIDGE)], input=b"{}\n",
                                 capture_output=True, timeout=10)

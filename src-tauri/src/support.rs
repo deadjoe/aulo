@@ -189,7 +189,8 @@ pub async fn save_report(
                     .map_or("unknown".into(), |gb| format!("{gb:.0} GB")),
             ),
             engine: format!(
-                "{} ({}), version {}, {} / {}",
+                "plan {:?}; {} ({}), version {}, {} / {}",
+                crate::plan::current(),
                 engine.state,
                 engine.message,
                 engine.engine_version.as_deref().unwrap_or("unknown"),

@@ -3,6 +3,7 @@ mod collections;
 mod drafts;
 mod engine;
 mod models;
+mod plan;
 mod runner;
 mod settings;
 mod share;
@@ -83,26 +84,9 @@ fn nvidia_gpu() -> (Option<String>, Option<f64>) {
     (None, None)
 }
 
-/// What keeps this computer from making songs, by the same rules the setup guide
-/// explains (src/lib/hardware.ts). Only definite shortfalls block; anything the
-/// engine itself can judge (no Apple silicon, no NVIDIA card found) is left to it.
-fn hardware_blocker(h: &Hardware) -> Option<&'static str> {
-    match (h.platform.as_str(), h.arch.as_str()) {
-        ("macos", "aarch64") if h.memory_gi_b < 31.0 => {
-            Some("Aulo needs a Mac with Apple silicon and at least 32 GB of memory to make music.")
-        }
-        ("windows", "x86_64") if h.gpu_memory_gi_b.is_some_and(|m| m < 7.5) => {
-            Some("Aulo needs an NVIDIA graphics card with at least 8 GB of memory to make music.")
-        }
-        _ => None,
-    }
-}
-
-/// The hardware check for creating, measured once: memory and graphics do not change
-/// while Aulo runs.
+/// Why this computer cannot make songs, if it cannot (see `plan`).
 pub(crate) fn creation_hardware_blocker() -> Option<&'static str> {
-    static BLOCKER: std::sync::OnceLock<Option<&'static str>> = std::sync::OnceLock::new();
-    *BLOCKER.get_or_init(|| hardware_blocker(&collect_hardware(std::env::temp_dir())))
+    plan::current().err()
 }
 
 #[tauri::command]
@@ -152,6 +136,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             inspect_hardware,
             engine::engine_status,
+            engine::prepare_engine,
             models::model_plan,
             models::model_status,
             models::download_models,
@@ -215,33 +200,6 @@ mod tests {
         if let Some(free) = report.free_disk_gi_b {
             assert!(free >= 0.0);
         }
-    }
-
-    #[test]
-    fn creating_needs_the_memory_the_setup_guide_asks_for() {
-        let mac = |memory| Hardware {
-            platform: "macos".into(),
-            arch: "aarch64".into(),
-            chip: "Test chip".into(),
-            memory_gi_b: memory,
-            free_disk_gi_b: None,
-            gpu: None,
-            gpu_memory_gi_b: None,
-            data_path: "/test".into(),
-        };
-        assert!(hardware_blocker(&mac(16.0)).unwrap().contains("32 GB"));
-        assert!(hardware_blocker(&mac(32.0)).is_none());
-        let pc = |vram| Hardware {
-            platform: "windows".into(),
-            arch: "x86_64".into(),
-            gpu: Some("NVIDIA".into()),
-            gpu_memory_gi_b: vram,
-            ..mac(32.0)
-        };
-        assert!(hardware_blocker(&pc(Some(6.0))).unwrap().contains("8 GB"));
-        assert!(hardware_blocker(&pc(Some(8.0))).is_none());
-        // Unknown graphics memory is the engine's call, not a guess.
-        assert!(hardware_blocker(&pc(None)).is_none());
     }
 
     #[test]

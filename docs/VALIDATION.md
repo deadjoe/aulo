@@ -1,5 +1,11 @@
 # Validation record
 
+## Engine plan — 2026-10-19
+
+- Native tests cover the plan for Macs of 4, 8, 12, 15.6, 32 and 64 GB, Windows cards of 6 to 32 GB and none, and other computers; the probe reports missing GGUF binaries as a damaged install; the one-time preparation note is required only for GGUF and only for the same models. Bridge tests: the planned engine is used and never swapped, preparation requests and the preparation itself.
+- On a 64 GB Apple silicon Mac with the engine forced to GGUF (`AULO_FORCE_ENGINE=gguf`) and GROOVE's pinned macOS yue2.cpp binaries: the one-time preparation took 18 s and wrote 4.3 GB; the resident GGUF engine made a song in 107 s (48.6 s of audio), stopped a second one 11 s in, and made a third in 83 s. The PyTorch engine took about 193 s for a song of similar length on the same Mac.
+- Not covered: an 8–15 GB Mac, Windows, and the small context on a real 8 GB machine.
+
 ## Lyrics and styles tools — 2026-10-19
 
 - Native tests: saving the same words moves them up instead of repeating, empty or oversized text is refused, lists stay at 200, deleting and the file round trip.
