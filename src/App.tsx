@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   Check,
+  CircleAlert,
   ChevronRight,
   Library,
   Play,
@@ -110,9 +111,20 @@ export default function App() {
     getSettings().then(setSettings, () => undefined);
   }, []);
   // Settings opens with ⌘, on macOS and Ctrl+, elsewhere, as in other apps.
+  // Web page actions (print, save page, open, reload) mean nothing in Aulo;
+  // the window's web view would otherwise run them, for example Ctrl+P on
+  // Windows. The song list uses ⌘P/⌘S for its own actions when songs are
+  // selected.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "," && (e.metaKey || e.ctrlKey) && explored) {
+      const command = e.metaKey || e.ctrlKey;
+      if (
+        e.key === "F5" ||
+        (command && ["p", "s", "o", "r"].includes(e.key.toLowerCase()))
+      ) {
+        e.preventDefault();
+      }
+      if (e.key === "," && command && explored) {
         e.preventDefault();
         setModal({ kind: "settings" });
       }
@@ -120,7 +132,7 @@ export default function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [explored]);
-  const { message, undo, notify, dismiss } = useMessage();
+  const { message, tone, undo, notify, warn, dismiss } = useMessage();
   const {
     songs: allSongs,
     collections,
@@ -181,6 +193,14 @@ export default function App() {
     window.addEventListener("focus", refreshStatus);
     return () => window.removeEventListener("focus", refreshStatus);
   }, [explored, refreshStatus]);
+  // An engine that could not start is looked at again after a while, so a slow
+  // first start on a fresh computer clears up without reopening Aulo.
+  const engineBlocked = status?.ready === false && status.blocker === "engine";
+  useEffect(() => {
+    if (!explored || !engineBlocked) return;
+    const timer = setInterval(refreshStatus, 65_000);
+    return () => clearInterval(timer);
+  }, [explored, engineBlocked, refreshStatus]);
 
   useEffect(() => saveComposer(request), [request]);
 
@@ -207,7 +227,7 @@ export default function App() {
       if (saveToWorkspace.id !== workspace.id)
         notify(`Creating in ${saveToWorkspace.name}.`);
     } catch (error) {
-      notify(problem(error, "This song could not be started."));
+      warn(problem(error, "This song could not be started."));
       refreshStatus();
     } finally {
       await settle;
@@ -215,7 +235,7 @@ export default function App() {
     }
   }
   const act = (action: Promise<void>, fallback: string) =>
-    action.catch((error: unknown) => notify(problem(error, fallback)));
+    action.catch((error: unknown) => warn(problem(error, fallback)));
 
   if (!explored)
     return <SetupWizard onExplore={explore} initialStep={setupStep} />;
@@ -246,7 +266,7 @@ export default function App() {
         );
       },
       (error: unknown) =>
-        notify(problem(error, "These songs could not be restored.")),
+        warn(problem(error, "These songs could not be restored.")),
     );
   const titleOf = (list: Song[]) =>
     list.length === 1
@@ -258,7 +278,7 @@ export default function App() {
       void start({ ...song.request }, song.workspace).then(
         () => notify("A new version is on its way."),
         (error: unknown) =>
-          notify(problem(error, "A new version could not be started.")),
+          warn(problem(error, "A new version could not be started.")),
       ),
     onReuse: (song) => {
       setRequest(song.request);
@@ -295,7 +315,7 @@ export default function App() {
           },
           (error: unknown) => {
             window.clearTimeout(slow);
-            notify(problem(error, "Sharing could not be opened."));
+            warn(problem(error, "Sharing could not be opened."));
           },
         );
     },
@@ -323,7 +343,7 @@ export default function App() {
               );
             },
             (error: unknown) =>
-              notify(
+              warn(
                 problem(error, "These songs could not be moved to the Trash."),
               ),
           ),
@@ -366,7 +386,7 @@ export default function App() {
       void act(cancelSong(song.id), "This song could not be stopped."),
     onRetry: (song: Song) =>
       void start({ ...song.request }, song.workspace).catch((error: unknown) =>
-        notify(problem(error, "This song could not be started.")),
+        warn(problem(error, "This song could not be started.")),
       ),
   };
   const createButton = (
@@ -718,6 +738,7 @@ export default function App() {
               onCreate={() => void create()}
               onOpenSetup={openSetup}
               onNotify={notify}
+              onProblem={warn}
               saveTo={
                 <SaveToMenu
                   options={liveWorkspaces.map((w) => ({
@@ -749,8 +770,11 @@ export default function App() {
         onOpen={(song) => setOpenId(song.id)}
       />
       {message && (
-        <div className="toast" role="status">
-          <Check size={17} />
+        <div
+          className={tone === "problem" ? "toast problem" : "toast"}
+          role={tone === "problem" ? "alert" : "status"}
+        >
+          {tone === "problem" ? <CircleAlert size={17} /> : <Check size={17} />}
           <span>{message}</span>
           {undo && (
             <button
@@ -868,6 +892,7 @@ export default function App() {
           onDeleted={remove}
           onSettingsChanged={setSettings}
           notify={notify}
+          warn={warn}
         />
       )}
     </div>

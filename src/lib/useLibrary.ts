@@ -109,21 +109,34 @@ export function useLibrary(
 }
 
 /** A short message that leaves on its own, optionally with a way to undo. */
+export type Tone = "done" | "problem";
+
 export function useMessage() {
   const [message, setMessage] = useState("");
+  const [tone, setTone] = useState<Tone>("done");
   const [undo, setUndo] = useState<(() => void) | null>(null);
   useEffect(() => {
     if (!message) return;
-    const timer = window.setTimeout(() => setMessage(""), undo ? 6000 : 4500);
+    const timer = window.setTimeout(
+      () => setMessage(""),
+      undo ? 6000 : tone === "problem" ? 8000 : 4500,
+    );
     return () => window.clearTimeout(timer);
-  }, [message, undo]);
+  }, [message, undo, tone]);
   const notify = useCallback(
     (text: string, undoAction: (() => void) | null = null) => {
       setMessage(text);
+      setTone("done");
       setUndo(() => undoAction);
     },
     [],
   );
+  /** Shows something that went wrong, with a warning icon. */
+  const warn = useCallback((text: string) => {
+    setMessage(text);
+    setTone("problem");
+    setUndo(null);
+  }, []);
   const dismiss = useCallback(() => setMessage(""), []);
-  return { message, undo: message ? undo : null, notify, dismiss };
+  return { message, tone, undo: message ? undo : null, notify, warn, dismiss };
 }

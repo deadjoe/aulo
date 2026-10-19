@@ -2,11 +2,11 @@ import { useState } from "react";
 import {
   Bookmark,
   ChevronDown,
+  Lightbulb,
   Eraser,
   Info,
   Music2,
   LoaderCircle,
-  Trash2,
   Undo2,
   WandSparkles,
 } from "lucide-react";
@@ -14,6 +14,7 @@ import { FullScreenLyrics, LyricsToolbar } from "./LyricsTools";
 import SavedPopover from "./SavedPopover";
 import { saveText } from "../lib/saved";
 import { useUndo } from "../lib/useUndo";
+import { EXAMPLES, freeForExample, nextExample } from "../lib/examples";
 import {
   addSection,
   addStyle,
@@ -108,6 +109,7 @@ export default function Composer({
   onClear,
   saveTo,
   onNotify,
+  onProblem,
 }: {
   request: SongRequest;
   onChange: (request: SongRequest) => void;
@@ -120,6 +122,7 @@ export default function Composer({
   saveTo: React.ReactNode;
   /** Short messages for the person (saved, couldn't save). */
   onNotify: (text: string) => void;
+  onProblem: (text: string) => void;
 }) {
   const [mode, setModeState] = useState<Mode>(initialMode);
   const [moreOpen, setMoreOpen] = useState(true);
@@ -131,7 +134,7 @@ export default function Composer({
   const lyricsTools = {
     lyrics: request.lyrics,
     history: lyricsHistory,
-    onError: onNotify,
+    onError: onProblem,
   };
   function setMode(next: Mode) {
     setModeState(next);
@@ -147,6 +150,7 @@ export default function Composer({
       ? "Add lyrics, or switch on Instrumental."
       : "";
   const ready = status?.ready === true;
+  const [example, setExample] = useState<number | null>(null);
   const canCreate = ready && !missing && !creating;
   const ideas = styleIdeas(0, request.style);
   const lengthWarning = request.instrumental
@@ -171,7 +175,7 @@ export default function Composer({
         placeholder={
           request.instrumental
             ? "Instrumental songs have no lyrics."
-            : "Write the words you want sung.\n\nTip: label parts like [Verse] and [Chorus] to shape the song."
+            : "Write the words you want sung. Aulo sings them as you write them.\n\nTip: label parts like [Verse] and [Chorus] to shape the song."
         }
         onChange={(e) => lyricsHistory.type(e.target.value)}
         onKeyDown={lyricsHistory.onKeyDown}
@@ -230,7 +234,24 @@ export default function Composer({
         {mode === "simple" ? (
           <>
             <section className="field-card describe-card">
-              <label htmlFor="style">Song description</label>
+              <header>
+                <label htmlFor="style">Song description</label>
+                {freeForExample(request) && (
+                  <button
+                    type="button"
+                    className="example-button"
+                    onClick={() => {
+                      const next = nextExample(example);
+                      setExample(next);
+                      const { title, style, lyrics } = EXAMPLES[next];
+                      set({ title, style, lyrics, instrumental: false });
+                    }}
+                  >
+                    <Lightbulb size={15} />
+                    {example === null ? "Try an example" : "Another example"}
+                  </button>
+                )}
+              </header>
               <textarea
                 id="style"
                 value={request.style}
@@ -278,7 +299,7 @@ export default function Composer({
                   <SavedPopover
                     kind="styles"
                     onPick={(saved) => styleHistory.replace(saved.text)}
-                    onError={onNotify}
+                    onError={onProblem}
                   />
                   <button
                     type="button"
@@ -304,7 +325,7 @@ export default function Composer({
                       ).then(
                         () => onNotify("Saved to your styles."),
                         (e: unknown) =>
-                          onNotify(
+                          onProblem(
                             typeof e === "string"
                               ? e
                               : "These styles couldn’t be saved.",
@@ -424,7 +445,7 @@ export default function Composer({
           disabled={!request.style && !request.lyrics && !request.title}
           onClick={onClear}
         >
-          <Trash2 size={17} />
+          <Eraser size={17} />
         </button>
         <button
           className="create-button"

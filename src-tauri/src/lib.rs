@@ -33,6 +33,23 @@ pub(crate) struct Hardware {
     pub(crate) blocker: Option<&'static str>,
 }
 
+/// The format of the files Aulo keeps (song records, collections, settings, saved
+/// lyrics and styles, the models record). Files from before this field read as 1.
+/// Raise it when a format changes in a way that needs converting old files.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub(crate) struct FormatVersion(u32);
+
+impl FormatVersion {
+    pub(crate) const CURRENT: Self = Self(1);
+}
+
+impl Default for FormatVersion {
+    fn default() -> Self {
+        Self::CURRENT
+    }
+}
+
 /// A lock that keeps working after a thread panicked while holding it. Aulo's shared
 /// state is plain data that is valid after every statement, so it stays usable; without
 /// this, one panic would make every later command panic until Aulo is restarted.
@@ -387,6 +404,15 @@ mod tests {
         assert!(json["gpuMemoryGiB"].is_null());
         assert_eq!(json["dataPath"], "/test/models");
         assert!(json.get("ready").is_none());
+    }
+
+    #[test]
+    fn files_record_their_format_and_older_files_read_as_the_first() {
+        let saved = serde_json::to_value(crate::settings::Settings::default()).unwrap();
+        assert_eq!(saved["format"], 1);
+        let old: crate::collections::Collections =
+            serde_json::from_str(r#"{"workspaces": [], "playlists": []}"#).unwrap();
+        assert_eq!(old.format, FormatVersion::CURRENT);
     }
 
     #[test]

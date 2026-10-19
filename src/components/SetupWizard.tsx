@@ -191,8 +191,8 @@ export default function SetupWizard({
             <>
               <h1>Make music on your own computer</h1>
               <p className="lead">
-                Describe a sound, add your words, and Aulo writes and sings the
-                song. Your songs never leave this computer.
+                Describe a sound, add your words, and Aulo composes and sings
+                the song. Your songs never leave this computer.
               </p>
               <ul className="welcome-list">
                 <li>

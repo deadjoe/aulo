@@ -35,6 +35,7 @@ pub struct Saved {
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 #[serde(default)]
 pub struct SavedFile {
+    pub format: crate::FormatVersion,
     pub lyrics: Vec<Saved>,
     pub styles: Vec<Saved>,
 }

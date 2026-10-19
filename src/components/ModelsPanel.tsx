@@ -288,11 +288,11 @@ export default function ModelsPanel() {
           )}
           {!active && (
             <button
-              className="folder-row"
+              className={verified ? "folder-row" : "folder-row quiet"}
               disabled={pending}
               onClick={() => void choose()}
             >
-              <FolderOpen size={19} />
+              <FolderOpen size={verified ? 19 : 15} />
               <span>
                 <strong>
                   {verified
@@ -301,7 +301,7 @@ export default function ModelsPanel() {
                 </strong>
                 <small>Choose their folder and Aulo checks them first.</small>
               </span>
-              <ArrowRight size={17} />
+              {verified && <ArrowRight size={17} />}
             </button>
           )}
           {!status && !error && !blocked && (
