@@ -4,6 +4,7 @@
 //! The engine writes its artifacts into the same folder; only `completed` works point
 //! at audio. Records are replaced atomically and in-flight works found at startup are
 //! marked interrupted rather than presented as finished.
+use crate::Held;
 use crate::{
     collections::{Collections, Playlist, Workspace, DEFAULT_WORKSPACE},
     engine, models,
@@ -460,7 +461,7 @@ impl SongService {
         f: impl FnOnce(&mut State) -> T,
     ) -> Result<T, String> {
         let root = library_root(app)?;
-        let mut state = self.0 .0.lock().unwrap();
+        let mut state = self.0 .0.held();
         if !state.loaded {
             state.collections = Collections::load(&root);
             let mut works = load_library(&root);
@@ -482,7 +483,7 @@ impl SongService {
     }
 
     fn publish_collections(app: &tauri::AppHandle, service: &SongService) {
-        let collections = service.0 .0.lock().unwrap().collections.clone();
+        let collections = service.0 .0.held().collections.clone();
         let _ = app.emit("collections-updated", collections);
     }
 
@@ -490,7 +491,7 @@ impl SongService {
     /// saved: the song's own files are the truth, and the next start reconciles from them.
     fn update(&self, app: &tauri::AppHandle, id: &str, persist: bool, f: impl FnOnce(&mut Work)) {
         let Ok(root) = library_root(app) else { return };
-        let mut state = self.0 .0.lock().unwrap();
+        let mut state = self.0 .0.held();
         if let Some(work) = state.works.iter_mut().find(|w| w.id == id) {
             f(work);
             if persist {
@@ -509,7 +510,7 @@ impl SongService {
         f: impl FnOnce(&mut Work),
     ) -> Result<(), String> {
         let root = library_root(app)?;
-        let mut state = self.0 .0.lock().unwrap();
+        let mut state = self.0 .0.held();
         let Some(work) = state.works.iter_mut().find(|w| w.id == id) else {
             return Ok(());
         };
@@ -519,7 +520,7 @@ impl SongService {
     }
 
     fn ensure_worker(&self, app: &tauri::AppHandle) {
-        let mut state = self.0 .0.lock().unwrap();
+        let mut state = self.0 .0.held();
         if state.worker {
             return;
         }
@@ -532,13 +533,13 @@ impl SongService {
     /// Stop the engine at once; used when Aulo quits.
     pub fn shutdown(&self) {
         let child = {
-            let mut state = self.0 .0.lock().unwrap();
+            let mut state = self.0 .0.held();
             state.stopping = true;
             state.child.take()
         };
         self.0 .1.notify_all();
         if let Some(child) = child {
-            let mut child = child.lock().unwrap();
+            let mut child = child.held();
             let _ = child.kill();
             let _ = child.wait();
         }
@@ -551,15 +552,20 @@ impl SongService {
 
     /// Apply Settings choices that affect the running service.
     pub fn apply_settings(&self, settings: &crate::settings::Settings) {
-        let mut state = self.0 .0.lock().unwrap();
+        let mut state = self.0 .0.held();
         state.keep_loaded = settings.keep_ready == crate::settings::KeepReady::Faster;
         drop(state);
         self.0 .1.notify_all();
     }
 
+    /// A song is being made or waits its turn.
+    pub fn making_songs(&self) -> bool {
+        self.engine_state().busy
+    }
+
     /// Whether the engine holds memory, and whether it is making a song.
     fn engine_state(&self) -> EngineMemory {
-        let state = self.0 .0.lock().unwrap();
+        let state = self.0 .0.held();
         EngineMemory {
             loaded: state.child.is_some(),
             busy: state.current.is_some() || !state.queue.is_empty(),
@@ -584,7 +590,7 @@ impl SongService {
     }
 
     fn forget_engine(&self) {
-        let mut state = self.0 .0.lock().unwrap();
+        let mut state = self.0 .0.held();
         state.input = None;
         state.child = None;
     }
@@ -594,7 +600,7 @@ impl SongService {
         loop {
             let next = {
                 let (lock, wake) = &*self.0;
-                let mut state = lock.lock().unwrap();
+                let mut state = lock.held();
                 loop {
                     if state.stopping {
                         return;
@@ -606,9 +612,15 @@ impl SongService {
                     state.release = false;
                     match decision {
                         IdleWait::Unload => break None,
-                        IdleWait::UntilWoken => state = wake.wait(state).unwrap(),
+                        IdleWait::UntilWoken => {
+                            state = wake
+                                .wait(state)
+                                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        }
                         IdleWait::For(idle) => {
-                            let (guard, waited) = wake.wait_timeout(state, idle).unwrap();
+                            let (guard, waited) = wake
+                                .wait_timeout(state, idle)
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
                             state = guard;
                             if waited.timed_out() && state.queue.is_empty() {
                                 break None;
@@ -629,7 +641,7 @@ impl SongService {
             };
             let result = self.run_one(&app, &id, &mut engine);
             let cancelled = {
-                let mut state = self.0 .0.lock().unwrap();
+                let mut state = self.0 .0.held();
                 state.current = None;
                 state.cancel_id.take().is_some_and(|c| c == id)
             };
@@ -655,7 +667,7 @@ impl SongService {
             engine::PROTOCOL_VERSION,
             ENGINE_START,
         )?;
-        let mut state = self.0 .0.lock().unwrap();
+        let mut state = self.0 .0.held();
         state.input = Some(process.input.clone());
         state.child = Some(process.child.clone());
         Ok(process)
@@ -672,7 +684,7 @@ impl SongService {
         let model_root = models::verified_root(app, &app.state::<models::ModelManager>())
             .ok_or("models_unverified")?;
         let (request, seed, expected) = {
-            let state = self.0 .0.lock().unwrap();
+            let state = self.0 .0.held();
             let work = state.works.iter().find(|w| w.id == id).ok_or("unknown")?;
             if work.state != SongState::Queued {
                 return Ok(());
@@ -706,7 +718,7 @@ impl SongService {
             .send(&generate_command(id, &request, seed, &model_root, &root))
             .map_err(|_| "engine_stopped")?;
         let cancel_now = {
-            let mut state = self.0 .0.lock().unwrap();
+            let mut state = self.0 .0.held();
             state.current = Some(id.to_string());
             state.cancel_id.as_deref() == Some(id)
         };
@@ -750,7 +762,7 @@ impl SongService {
 
     fn request_cancel(&self, id: &str) {
         let (input, child) = {
-            let mut state = self.0 .0.lock().unwrap();
+            let mut state = self.0 .0.held();
             state.cancel_id = Some(id.to_string());
             if state.current.as_deref() != Some(id) {
                 return;
@@ -769,13 +781,13 @@ impl SongService {
         std::thread::spawn(move || {
             let started = std::time::Instant::now();
             while started.elapsed() < CANCEL_GRACE {
-                if service.0 .0.lock().unwrap().current.as_deref() != Some(id.as_str()) {
+                if service.0 .0.held().current.as_deref() != Some(id.as_str()) {
                     return;
                 }
                 std::thread::sleep(Duration::from_millis(250));
             }
             if let Some(child) = child {
-                let mut child = child.lock().unwrap();
+                let mut child = child.held();
                 let _ = child.kill();
             }
         });
@@ -923,7 +935,7 @@ impl SongService {
     /// Stop the engine and wait until it has gone; refused while songs are being made.
     pub fn unload_engine(&self) -> Result<(), String> {
         {
-            let mut state = self.0 .0.lock().unwrap();
+            let mut state = self.0 .0.held();
             if state.current.is_some() || !state.queue.is_empty() {
                 return Err("Stop the songs being made first.".into());
             }
@@ -934,7 +946,7 @@ impl SongService {
         }
         self.0 .1.notify_all();
         let started = std::time::Instant::now();
-        while self.0 .0.lock().unwrap().child.is_some() {
+        while self.0 .0.held().child.is_some() {
             if started.elapsed() > Duration::from_secs(20) {
                 return Err("The music engine is still stopping. Try again in a moment.".into());
             }
@@ -1296,14 +1308,15 @@ pub fn trash_songs(
     ids: Vec<String>,
     trashed: bool,
 ) -> Result<Vec<String>, String> {
-    let changed: Vec<String> = service.with_state(&app, |state| {
-        state
-            .works
-            .iter()
-            .filter(|w| ids.contains(&w.id) && !w.active())
-            .filter(|w| w.trashed_ms.is_some() != trashed)
-            .map(|w| w.id.clone())
-            .collect()
+    let (changed, making): (Vec<String>, bool) = service.with_state(&app, |state| {
+        let chosen = || state.works.iter().filter(|w| ids.contains(&w.id));
+        (
+            chosen()
+                .filter(|w| !w.active() && w.trashed_ms.is_some() != trashed)
+                .map(|w| w.id.clone())
+                .collect(),
+            chosen().any(Work::active),
+        )
     })?;
     let now = now_ms();
     let mut saved = Vec::new();
@@ -1318,7 +1331,8 @@ pub fn trash_songs(
     if saved.is_empty() && !changed.is_empty() {
         return Err(NOT_SAVED.into());
     }
-    if changed.is_empty() && trashed {
+    // Songs already where they were asked to go need nothing; songs being made do.
+    if changed.is_empty() && trashed && making {
         return Err("Stop these songs before moving them to the Trash.".into());
     }
     Ok(saved)
@@ -1538,7 +1552,7 @@ impl Turns {
     }
 
     fn take(&'static self) -> Turn {
-        let mut taken = self.taken.lock().unwrap();
+        let mut taken = self.taken.held();
         while *taken >= self.limit {
             taken = self.freed.wait(taken).unwrap();
         }
@@ -1549,7 +1563,7 @@ impl Turns {
 
 impl Drop for Turn {
     fn drop(&mut self) {
-        *self.0.taken.lock().unwrap() -= 1;
+        *self.0.taken.held() -= 1;
         self.0.freed.notify_one();
     }
 }

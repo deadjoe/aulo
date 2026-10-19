@@ -5,6 +5,7 @@
 //! Windows). People never choose: a computer's hardware does not change, so the
 //! plan is the same on every start and nothing about it is shown or adjustable.
 
+use crate::Held;
 use std::{
     sync::Mutex,
     time::{Duration, Instant},
@@ -92,7 +93,7 @@ pub fn plan(h: &Hardware) -> Result<Plan, &'static str> {
             Some(_) => {
                 Err("Aulo needs an NVIDIA graphics card with at least 8 GB of memory to make music.")
             }
-            None => Err("Aulo couldn’t find an NVIDIA graphics card. If this PC has one, update its driver and open Aulo again."),
+            None => Err("Aulo couldn’t find an NVIDIA graphics card. If this PC has one, update its driver, then check again."),
         },
         ("macos", _) => Err("Aulo needs a Mac with Apple silicon to make music."),
         _ => Err("Aulo makes music on Macs with Apple silicon and on Windows PCs with an NVIDIA graphics card."),
@@ -152,7 +153,7 @@ pub fn current() -> Result<Plan, &'static str> {
             context_cap: None,
         });
     }
-    DECISION.lock().unwrap().get(Instant::now(), || {
+    DECISION.held().get(Instant::now(), || {
         plan(&crate::collect_hardware(std::env::temp_dir()))
     })
 }
@@ -182,6 +183,7 @@ mod tests {
             gpu_memory_gi_b: None,
             gpu_driver: None,
             data_path: "/test".into(),
+            blocker: None,
         }
     }
 

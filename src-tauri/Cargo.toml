@@ -30,6 +30,7 @@ claxon = "0.4.3"
 hound = "3.5.1"
 mp3lame-encoder = "0.2.5"
 lofty = "0.25"
+tauri-plugin-single-instance = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
@@ -37,5 +38,5 @@ objc2-foundation = { version = "0.3", features = ["NSArray", "NSGeometry", "NSSt
 objc2-app-kit = { version = "0.3", features = ["NSResponder", "NSSharingService", "NSView"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows = { version = "0.62", features = ["ApplicationModel_DataTransfer", "Foundation", "Storage", "Storage_Streams", "Win32_Foundation", "Win32_System_WinRT", "Win32_UI_Shell", "Win32_Graphics_Dxgi"] }
+windows = { version = "0.62", features = ["ApplicationModel_DataTransfer", "Foundation", "Storage", "Storage_Streams", "Win32_Foundation", "Win32_System_WinRT", "Win32_UI_Shell", "Win32_Graphics_Dxgi", "Win32_System_Power"] }
 windows-collections = "0.3"

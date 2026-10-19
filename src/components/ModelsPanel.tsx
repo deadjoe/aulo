@@ -1,5 +1,5 @@
 import { inspectEngine } from "../lib/core";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ArrowRight,
   CheckCircle2,
@@ -14,14 +14,17 @@ import { chooseModelFolder } from "../lib/hardware";
 import {
   desktopModelsAvailable,
   downloadModels,
+  downloadPace,
   formatBytes,
   getModelPlan,
   getModelStatus,
   modelOperationActive,
   pauseModels,
   openModelLicense,
+  paceText,
   verifyModels,
   type ModelPlan,
+  type Sample,
   type ModelStatus,
 } from "../lib/models";
 import { Mark } from "./Brand";
@@ -36,6 +39,7 @@ export default function ModelsPanel() {
   const [pending, setPending] = useState(false);
   const [accepted, setAccepted] = useState(false);
   const [pauseRequested, setPauseRequested] = useState(false);
+  const samples = useRef<Sample[]>([]);
   useEffect(() => {
     if (!desktop) return;
     let cancelled = false;
@@ -51,6 +55,14 @@ export default function ModelsPanel() {
           setBlocked("");
           setPlan(nextPlan);
           setStatus(nextStatus);
+          if (nextStatus.phase === "downloading") {
+            samples.current = [
+              ...samples.current.filter((s) => Date.now() - s.at < 30_000),
+              { at: Date.now(), bytes: nextStatus.completedBytes },
+            ];
+          } else {
+            samples.current = [];
+          }
           busy = modelOperationActive(nextStatus);
           if (!modelOperationActive(nextStatus)) setPauseRequested(false);
         }
@@ -105,6 +117,10 @@ export default function ModelsPanel() {
     status.operation === "verify" &&
     !!status.modelRoot;
   const downloading = status?.operation === "download";
+  const pace =
+    status?.phase === "downloading"
+      ? downloadPace(samples.current, status.totalBytes)
+      : null;
   const label = verified
     ? "Ready"
     : status?.phase === "unverified"
@@ -177,7 +193,7 @@ export default function ModelsPanel() {
                 max={100}
                 value={percent}
               />
-              <p>{status?.message}</p>
+              <p>{pace ? paceText(pace) : status?.message}</p>
               {active && (
                 <button
                   className="text-button"

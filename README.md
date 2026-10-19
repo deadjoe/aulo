@@ -4,7 +4,7 @@ Your music, your space. A local music creation app for macOS and Windows, powere
 
 ## Status
 
-**0.2 creation workspace.** Aulo creates, plays, and keeps songs on the computer. The music engine ships inside the app (macOS on Apple silicon so far); after the setup guide prepares the music models, Create works.
+**Creation workspace (0.1.0).** Aulo creates, plays, and keeps songs on the computer. The music engine ships inside the app (macOS on Apple silicon so far); after the setup guide prepares the music models, Create works.
 
 Implemented:
 
@@ -12,7 +12,7 @@ Implemented:
 - First-run welcome, automatic hardware inspection, and music-model setup screens.
 - Pinned official model downloads with byte-level progress, pause/resume, bounded retries, storage checks, and SHA-256 verification. Verified models stay ready across restarts while their files are unchanged.
 - A Suno-style creation workspace: Simple and Advanced modes, lyrics with section shortcuts, style ideas, voice, weirdness, and style influence. No scores, seeds, engines, or other technical settings are shown.
-- A native song service with a resident engine: the model stays loaded between songs and is released after 10 idle minutes; a queue, stop, a hang watchdog, crash recovery, keep-awake on macOS, and durable works under the application data folder.
+- A native song service with a resident engine: the model stays loaded between songs and is released after 10 idle minutes; a queue, stop, a hang watchdog, crash recovery, keep-awake, a question before quitting while a song is being made, one Aulo at a time, and durable works under the application data folder.
 - Suno-style progress: a spinner on the song's cover and "Creating…", with no technical stage names.
 - Workspaces (with Save to when creating, archiving and renaming) and playlists; multi-select with batch Add to playlist, Add to queue, Move to workspace and Move to Trash, with shortcuts; search, filters, sorting, and List, Waveform and Grid layouts.
 - A library grouped by day with covers drawn from each song's style (also written, with the title, into downloaded and shared MP3, M4A and FLAC files) and likes; song details with lyrics; a song menu with Create another version, Reuse settings, Rename, Download, Show in Finder, Add to queue, and Move to Trash; and a bottom player.

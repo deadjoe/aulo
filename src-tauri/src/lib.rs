@@ -28,6 +28,23 @@ pub(crate) struct Hardware {
     /// The NVIDIA driver's version, when `nvidia-smi` could tell.
     pub(crate) gpu_driver: Option<String>,
     pub(crate) data_path: String,
+    /// Why this computer cannot make songs (`plan::plan`), filled in for setup only, so
+    /// the interface never keeps its own copy of the hardware rule.
+    pub(crate) blocker: Option<&'static str>,
+}
+
+/// A lock that keeps working after a thread panicked while holding it. Aulo's shared
+/// state is plain data that is valid after every statement, so it stays usable; without
+/// this, one panic would make every later command panic until Aulo is restarted.
+pub(crate) trait Held<T> {
+    fn held(&self) -> std::sync::MutexGuard<'_, T>;
+}
+
+impl<T> Held<T> for std::sync::Mutex<T> {
+    fn held(&self) -> std::sync::MutexGuard<'_, T> {
+        self.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
 }
 
 /// Aulo's own data folder: songs, models, settings and logs.
@@ -176,9 +193,10 @@ pub(crate) fn creation_hardware_blocker() -> Option<&'static str> {
 async fn inspect_hardware(app: tauri::AppHandle) -> Result<Hardware, String> {
     let path = data_dir(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let hardware = collect_hardware(path);
+        let mut hardware = collect_hardware(path);
         // "Check again" after installing a driver must be able to unblock creating.
         plan::recheck(&hardware);
+        hardware.blocker = plan::current().err();
         hardware
     })
     .await
@@ -210,11 +228,56 @@ pub(crate) fn collect_hardware(path: std::path::PathBuf) -> Hardware {
         gpu_memory_gi_b: nvidia.memory_gi_b,
         gpu_driver: nvidia.driver,
         data_path: path.to_string_lossy().into_owned(),
+        blocker: None,
     }
+}
+
+/// The person agreed to quit although a song was being made.
+static QUIT_CONFIRMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// The question is on screen; a second close must not ask twice.
+static QUIT_ASKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Quitting stops the song being made and loses it, so ask first. True when Aulo asked
+/// and the quit must wait for the answer.
+fn ask_before_quitting(app: &tauri::AppHandle) -> bool {
+    use std::sync::atomic::Ordering;
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+    if QUIT_CONFIRMED.load(Ordering::SeqCst) || !app.state::<songs::SongService>().making_songs() {
+        return false;
+    }
+    if QUIT_ASKED.swap(true, Ordering::SeqCst) {
+        return true;
+    }
+    let handle = app.clone();
+    app.dialog()
+        .message("If you quit now, the song being made stops and is lost.")
+        .title("Quit while a song is being made?")
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "Quit".into(),
+            "Keep making".into(),
+        ))
+        .show(move |quit| {
+            QUIT_ASKED.store(false, Ordering::SeqCst);
+            if quit {
+                QUIT_CONFIRMED.store(true, Ordering::SeqCst);
+                handle.exit(0);
+            }
+        });
+    true
 }
 
 pub fn run() {
     tauri::Builder::default()
+        // First: a second launch brings this window forward instead of loading a second
+        // music engine (and a second copy of the model in memory).
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
@@ -265,13 +328,25 @@ pub fn run() {
             support::storage_usage,
             support::save_report
         ])
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if ask_before_quitting(window.app_handle()) {
+                    api.prevent_close();
+                }
+            }
+        })
         .build(tauri::generate_context!())
         .expect("Failed to start Aulo")
-        .run(|app, event| {
-            // Never leave a music engine running after Aulo quits.
-            if let tauri::RunEvent::Exit = event {
-                app.state::<songs::SongService>().shutdown();
+        .run(|app, event| match event {
+            // ⌘Q and the app menu's Quit arrive here without closing the window first.
+            tauri::RunEvent::ExitRequested { api, .. } => {
+                if ask_before_quitting(app) {
+                    api.prevent_exit();
+                }
             }
+            // Never leave a music engine running after Aulo quits.
+            tauri::RunEvent::Exit => app.state::<songs::SongService>().shutdown(),
+            _ => {}
         });
 }
 
@@ -304,6 +379,7 @@ mod tests {
             gpu_memory_gi_b: None,
             gpu_driver: None,
             data_path: "/test/models".into(),
+            blocker: None,
         };
         let json = serde_json::to_value(report).unwrap();
         assert_eq!(json["memoryGiB"], 32.0);
@@ -311,6 +387,31 @@ mod tests {
         assert!(json["gpuMemoryGiB"].is_null());
         assert_eq!(json["dataPath"], "/test/models");
         assert!(json.get("ready").is_none());
+    }
+
+    #[test]
+    fn the_app_has_one_version_everywhere() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let read = |path: &str| -> serde_json::Value {
+            serde_json::from_str(&std::fs::read_to_string(root.join(path)).unwrap()).unwrap()
+        };
+        let version = env!("CARGO_PKG_VERSION");
+        assert_eq!(read("tauri.conf.json")["version"], version);
+        assert_eq!(read("../package.json")["version"], version);
+    }
+
+    #[test]
+    fn a_panic_while_holding_a_lock_does_not_break_aulo() {
+        let shared = std::sync::Arc::new(std::sync::Mutex::new(1));
+        let held = shared.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = held.lock().unwrap();
+            panic!("a bug in one command");
+        })
+        .join();
+        assert!(shared.is_poisoned());
+        *shared.held() += 1;
+        assert_eq!(*shared.held(), 2);
     }
 
     #[test]
