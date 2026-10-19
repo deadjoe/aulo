@@ -629,7 +629,8 @@ fn the_usual_time_comes_from_the_last_songs_this_computer_finished() {
 
 #[test]
 fn every_reason_the_engine_can_send_is_known_and_explained() {
-    let bridge = include_str!("../../../runtime/bridge.py");
+    // Windows checkouts may end lines with \r\n.
+    let bridge = include_str!("../../../runtime/bridge.py").replace("\r\n", "\n");
     let start = bridge.find("FAILURE_PATTERNS = (").unwrap();
     let end = start + bridge[start..].find("\n)\n").unwrap();
     let sent: Vec<&str> = bridge[start..end]
