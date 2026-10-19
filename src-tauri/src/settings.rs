@@ -88,7 +88,7 @@ pub fn save(base: &Path, settings: &Settings) -> Result<(), String> {
 pub struct SettingsStore(Mutex<Option<Settings>>);
 
 fn base(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    app.path().app_data_dir().map_err(|e| e.to_string())
+    crate::data_dir(app)
 }
 
 impl SettingsStore {

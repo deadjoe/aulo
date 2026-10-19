@@ -445,3 +445,26 @@ fn clearing_old_sets_keeps_the_folder_in_use_and_never_follows_links() {
     // Nothing to clear is fine too.
     remove_managed_except(&base.join("missing"), &keep).unwrap();
 }
+
+#[test]
+fn windows_models_always_get_a_path_yue2cpp_can_open() {
+    let plain = Path::new(r"C:\Users\amy\AppData\Local\studio.aulo.desktop\models");
+    assert_eq!(models_home_for(plain, true, None), plain);
+    for name in ["张三", "さくら", "김민준", "José"] {
+        let own = PathBuf::from(format!(
+            r"C:\Users\{name}\AppData\Local\studio.aulo.desktop\models"
+        ));
+        let home = models_home_for(&own, true, Some(PathBuf::from(r"D:\ProgramData")));
+        assert!(home.to_string_lossy().is_ascii(), "{name}");
+        assert!(home.starts_with(r"D:\ProgramData"));
+        // The same account always gets the same folder; another account another one.
+        assert_eq!(
+            home,
+            models_home_for(&own, true, Some(PathBuf::from(r"D:\ProgramData")))
+        );
+        assert_ne!(home, models_home_for(&plain.join("x"), true, None));
+    }
+    // Other systems open any path.
+    let mac = Path::new("/Users/张三/Library/Application Support/studio.aulo.desktop/models");
+    assert_eq!(models_home_for(mac, false, None), mac);
+}

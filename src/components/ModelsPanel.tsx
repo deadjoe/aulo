@@ -283,9 +283,7 @@ export default function ModelsPanel() {
                     ? "Use a different folder"
                     : "Already have the music models?"}
                 </strong>
-                <small>
-                  Choose their folder. Aulo checks them and changes nothing.
-                </small>
+                <small>Choose their folder and Aulo checks them first.</small>
               </span>
               <ArrowRight size={17} />
             </button>

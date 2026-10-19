@@ -19,27 +19,53 @@ pub(crate) struct Hardware {
     pub(crate) platform: String,
     pub(crate) arch: String,
     pub(crate) chip: String,
+    /// The operating system's own name for its version, such as "macOS 15.6".
+    pub(crate) os_version: Option<String>,
     pub(crate) memory_gi_b: f64,
     pub(crate) free_disk_gi_b: Option<f64>,
     pub(crate) gpu: Option<String>,
     pub(crate) gpu_memory_gi_b: Option<f64>,
+    /// The NVIDIA driver's version, when `nvidia-smi` could tell.
+    pub(crate) gpu_driver: Option<String>,
     pub(crate) data_path: String,
+}
+
+/// Aulo's own data folder: songs, models, settings and logs.
+///
+/// The local (not roaming) folder: on Windows, Roaming is copied between the computers
+/// of a domain account, which several gigabytes of models and songs must not be. On
+/// macOS and Linux both are the same folder.
+pub(crate) fn data_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    app.path().app_local_data_dir().map_err(|e| e.to_string())
+}
+
+/// What `nvidia_gpu` found.
+#[derive(Default)]
+struct Nvidia {
+    name: Option<String>,
+    memory_gi_b: Option<f64>,
+    driver: Option<String>,
 }
 
 /// The NVIDIA card and its own memory (VRAM, not the computer's memory). `nvidia-smi`
 /// is installed with every NVIDIA driver; DXGI, part of Windows itself, answers when it
 /// cannot be found or run.
 #[cfg(target_os = "windows")]
-fn nvidia_gpu() -> (Option<String>, Option<f64>) {
+fn nvidia_gpu() -> Nvidia {
     let smi = [
         std::path::PathBuf::from("nvidia-smi"),
         std::path::PathBuf::from(r"C:\Program Files\NVIDIA Corporation\NVSMI\nvidia-smi.exe"),
     ];
-    smi.iter()
-        .find_map(|program| nvidia_smi(program))
-        .or_else(dxgi_nvidia)
-        .map(|(name, memory)| (Some(name), Some(memory)))
-        .unwrap_or((None, None))
+    if let Some(found) = smi.iter().find_map(|program| nvidia_smi(program)) {
+        return found;
+    }
+    dxgi_nvidia()
+        .map(|(name, memory)| Nvidia {
+            name: Some(name),
+            memory_gi_b: Some(memory),
+            driver: None,
+        })
+        .unwrap_or_default()
 }
 
 /// The NVIDIA adapter with the most dedicated memory, from DXGI.
@@ -75,7 +101,7 @@ fn dxgi_nvidia() -> Option<(String, f64)> {
 }
 
 #[cfg(target_os = "windows")]
-fn nvidia_smi(program: &std::path::Path) -> Option<(String, f64)> {
+fn nvidia_smi(program: &std::path::Path) -> Option<Nvidia> {
     use std::{
         os::windows::process::CommandExt,
         process::Command,
@@ -83,7 +109,7 @@ fn nvidia_smi(program: &std::path::Path) -> Option<(String, f64)> {
     };
     let mut child = match Command::new(program)
         .args([
-            "--query-gpu=name,memory.total",
+            "--query-gpu=name,memory.total,driver_version",
             "--format=csv,noheader,nounits",
         ])
         .creation_flags(0x08000000)
@@ -112,22 +138,33 @@ fn nvidia_smi(program: &std::path::Path) -> Option<(String, f64)> {
         Ok(output) if output.status.success() => output,
         _ => return None,
     };
-    // Report one actual device; never add memory across GPUs.
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
+    parse_nvidia_smi(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// `name, memory (MiB), driver` lines from nvidia-smi. Reports one actual device, the
+/// one with the most memory; memory is never added across GPUs.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn parse_nvidia_smi(text: &str) -> Option<Nvidia> {
+    text.lines()
         .filter_map(|line| {
-            let (name, memory) = line.rsplit_once(',')?;
-            Some((
-                name.trim().to_string(),
-                memory.trim().parse::<f64>().ok()? / 1024.0,
-            ))
+            let (rest, driver) = line.rsplit_once(',')?;
+            let (name, memory) = rest.rsplit_once(',')?;
+            Some(Nvidia {
+                name: Some(name.trim().to_string()),
+                memory_gi_b: Some(memory.trim().parse::<f64>().ok()? / 1024.0),
+                driver: Some(driver.trim().to_string()).filter(|d| !d.is_empty()),
+            })
         })
-        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .max_by(|a, b| {
+            a.memory_gi_b
+                .unwrap_or(0.0)
+                .total_cmp(&b.memory_gi_b.unwrap_or(0.0))
+        })
 }
 
 #[cfg(not(target_os = "windows"))]
-fn nvidia_gpu() -> (Option<String>, Option<f64>) {
-    (None, None)
+fn nvidia_gpu() -> Nvidia {
+    Nvidia::default()
 }
 
 /// Why this computer cannot make songs, if it cannot (see `plan`).
@@ -137,7 +174,7 @@ pub(crate) fn creation_hardware_blocker() -> Option<&'static str> {
 
 #[tauri::command]
 async fn inspect_hardware(app: tauri::AppHandle) -> Result<Hardware, String> {
-    let path = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let path = data_dir(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
         let hardware = collect_hardware(path);
         // "Check again" after installing a driver must be able to unblock creating.
@@ -157,7 +194,7 @@ pub(crate) fn collect_hardware(path: std::path::PathBuf) -> Hardware {
         .iter()
         .filter(|d| path.starts_with(d.mount_point()))
         .max_by_key(|d| d.mount_point().as_os_str().len());
-    let (gpu, gpu_memory) = nvidia_gpu();
+    let nvidia = nvidia_gpu();
     Hardware {
         platform: std::env::consts::OS.to_string(),
         arch: std::env::consts::ARCH.to_string(),
@@ -166,10 +203,12 @@ pub(crate) fn collect_hardware(path: std::path::PathBuf) -> Hardware {
             .first()
             .map(|c| c.brand().to_string())
             .unwrap_or_else(|| "Unknown processor".into()),
+        os_version: System::long_os_version(),
         memory_gi_b: system.total_memory() as f64 / 1_073_741_824.0,
         free_disk_gi_b: disk.map(|d| d.available_space() as f64 / 1_073_741_824.0),
-        gpu,
-        gpu_memory_gi_b: gpu_memory,
+        gpu: nvidia.name,
+        gpu_memory_gi_b: nvidia.memory_gi_b,
+        gpu_driver: nvidia.driver,
         data_path: path.to_string_lossy().into_owned(),
     }
 }
@@ -258,10 +297,12 @@ mod tests {
             platform: "macos".into(),
             arch: "aarch64".into(),
             chip: "Test chip".into(),
+            os_version: None,
             memory_gi_b: 32.0,
             free_disk_gi_b: None,
             gpu: None,
             gpu_memory_gi_b: None,
+            gpu_driver: None,
             data_path: "/test/models".into(),
         };
         let json = serde_json::to_value(report).unwrap();
@@ -270,5 +311,20 @@ mod tests {
         assert!(json["gpuMemoryGiB"].is_null());
         assert_eq!(json["dataPath"], "/test/models");
         assert!(json.get("ready").is_none());
+    }
+
+    #[test]
+    fn nvidia_smi_reports_the_largest_card_with_its_driver() {
+        let found = parse_nvidia_smi(
+            "NVIDIA GeForce RTX 4060, 8188, 566.36\nNVIDIA RTX A4000, 16376, 566.36\nnot a card\n",
+        )
+        .unwrap();
+        assert_eq!(found.name.as_deref(), Some("NVIDIA RTX A4000"));
+        assert!((found.memory_gi_b.unwrap() - 15.99).abs() < 0.01);
+        assert_eq!(found.driver.as_deref(), Some("566.36"));
+        // A name with a comma in it still reads.
+        let odd = parse_nvidia_smi("NVIDIA, Special, 8192, 551.0").unwrap();
+        assert_eq!(odd.name.as_deref(), Some("NVIDIA, Special"));
+        assert!(parse_nvidia_smi("").is_none());
     }
 }

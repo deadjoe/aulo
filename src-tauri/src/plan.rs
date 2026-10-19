@@ -34,12 +34,29 @@ impl Engine {
 /// about 5.5 GB at peak instead of 8.2 GB, and songs of up to about 4.9 minutes.
 pub const SMALL_CONTEXT: u32 = 12_288;
 
+/// GROOVE's song budget: 9 000 semantic tokens at 25 per second of audio, six minutes.
+const MAX_SONG_SECONDS: u32 = 360;
+/// With the small context the budget leaves about 4.9 minutes (GROOVE's GGUF_ENGINE.md,
+/// measured: a 4:51 song ended by itself one second under it).
+const SMALL_CONTEXT_SONG_SECONDS: u32 = 290;
+
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Plan {
     pub engine: Engine,
     /// A smaller context for 8 GB machines; None for the full one.
     pub context_cap: Option<u32>,
+}
+
+impl Plan {
+    /// About how long a song can be on this computer; longer lyrics are cut off.
+    pub fn max_song_seconds(self) -> u32 {
+        if self.context_cap.is_some() {
+            SMALL_CONTEXT_SONG_SECONDS
+        } else {
+            MAX_SONG_SECONDS
+        }
+    }
 }
 
 /// Memory is compared by its marketed size: a "16 GB" machine reports a little less.
@@ -158,10 +175,12 @@ mod tests {
             platform: "macos".into(),
             arch: "aarch64".into(),
             chip: "Apple M3".into(),
+            os_version: None,
             memory_gi_b: memory,
             free_disk_gi_b: None,
             gpu: None,
             gpu_memory_gi_b: None,
+            gpu_driver: None,
             data_path: "/test".into(),
         }
     }
@@ -254,6 +273,13 @@ mod tests {
         assert!(decision.get(start, || Err("no card")).is_err());
         decision.recheck(start, Ok(GGUF));
         assert_eq!(decision.get(start, || unreachable!()), Ok(GGUF));
+    }
+
+    #[test]
+    fn songs_are_shorter_with_the_small_context() {
+        assert_eq!(TORCH.max_song_seconds(), 360);
+        assert_eq!(GGUF.max_song_seconds(), 360);
+        assert_eq!(GGUF_SMALL.max_song_seconds(), 290);
     }
 
     #[test]

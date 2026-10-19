@@ -255,7 +255,9 @@ describe("library", () => {
     ]);
     const user = userEvent.setup();
     render(<App />);
-    expect(await screen.findByText("Creating…")).toBeVisible();
+    expect(
+      await screen.findByText(/^Creating… 0:0\d · The first song takes longer/),
+    ).toBeVisible();
     expect(
       screen.queryByText(/Recording|Performing|%/),
     ).not.toBeInTheDocument();

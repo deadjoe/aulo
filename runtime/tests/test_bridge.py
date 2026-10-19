@@ -277,3 +277,53 @@ class ServeTests(unittest.TestCase):
         self.assertEqual([e for e, _ in events], ["ready", "failed", "completed", "failed"])
         self.assertEqual(events[2][1], WORK_ID)
         engine.close.assert_called_once()
+
+
+class FailureReasonTests(unittest.TestCase):
+    def test_failures_are_told_apart_by_what_people_can_do(self):
+        reason = bridge.failure_reason
+        too_long = RuntimeError("the prompt (9000 tokens) leaves no room for a song in a "
+                                "12288-token context: shorten the lyrics")
+        self.assertEqual(reason(too_long), "lyrics_too_long")
+        self.assertEqual(reason(RuntimeError("CUDA out of memory. Tried to allocate 2 GiB")),
+                         "out_of_memory")
+        self.assertEqual(reason(RuntimeError(
+            "yue-synth failed (exit 1):\nggml_backend_cuda_buffer_type_alloc_buffer: "
+            "allocating 3000 MiB on device 0: cudaMalloc failed: out of memory")),
+            "out_of_memory")
+        self.assertEqual(reason(RuntimeError(
+            "yue-lm failed (exit 1): CUDA error: CUDA driver version is insufficient for "
+            "CUDA runtime version")), "graphics_driver")
+        self.assertEqual(reason(RuntimeError(
+            "yue2.cpp cannot open a path with non-ASCII characters on Windows: C:\\Users\\张三")),
+            "folder_name")
+        self.assertEqual(reason(ValueError("The music model folder is incomplete.")),
+                         "models_damaged")
+        self.assertEqual(reason(RuntimeError("boom")), "unknown")
+
+    def test_a_cause_counts_and_a_missing_model_file_is_damage(self):
+        try:
+            try:
+                raise MemoryError("not enough memory")
+            except MemoryError as inner:
+                raise RuntimeError("generation failed") from inner
+        except RuntimeError as outer:
+            self.assertEqual(bridge.failure_reason(outer), "out_of_memory")
+        missing = FileNotFoundError(2, "No such file", "/models/YuE2-3B/model.safetensors")
+        self.assertEqual(bridge.failure_reason(missing, "/models"), "models_damaged")
+        elsewhere = FileNotFoundError(2, "No such file", "/tmp/out.flac")
+        self.assertEqual(bridge.failure_reason(elsewhere, "/models"), "unknown")
+
+    def test_serve_sends_the_reason_with_the_failure(self):
+        events = []
+        engine = Mock()
+        engine.generate.side_effect = [RuntimeError("CUDA out of memory")]
+        commands = bridge.Commands(io.BytesIO())
+        commands.queue.put(("generate", {"workId": WORK_ID, "modelRoot": "/models"}))
+        commands.queue.put(("shutdown", None))
+        with patch.object(bridge, "Engine", return_value=engine), \
+                patch.object(bridge.traceback, "print_exc"):
+            bridge.serve({"backend": "torch"}, commands,
+                         lambda event, **fields: events.append((event, fields)))
+        self.assertEqual(events[1][0], "failed")
+        self.assertEqual(events[1][1]["reason"], "out_of_memory")

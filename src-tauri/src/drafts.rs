@@ -122,7 +122,7 @@ pub fn save(base: &Path, saved: &SavedFile) -> Result<(), String> {
 pub struct SavedStore(Mutex<Option<SavedFile>>);
 
 fn base(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    app.path().app_data_dir().map_err(|e| e.to_string())
+    crate::data_dir(app)
 }
 
 const NOT_SAVED: &str =

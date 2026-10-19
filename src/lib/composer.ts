@@ -45,6 +45,24 @@ export function addStyle(style: string, idea: string): string {
 }
 
 export const SECTIONS = ["Verse", "Chorus", "Bridge", "Outro"] as const;
+/** A rough time for lyrics: sung lines take about 4.5 s each, with breaks between parts. */
+export function estimatedSeconds(lyrics: string): number {
+  const lines = lyrics.split("\n").map((l) => l.trim());
+  const sung = lines.filter((l) => l && !l.startsWith("[")).length;
+  const parts = lines.filter((l) => l.startsWith("[")).length;
+  return sung * 4.5 + parts * 6;
+}
+
+/**
+ * A note when lyrics may run past what this computer can make in one song: the music
+ * engine stops at its limit, so a song would end early. Null when there is no worry.
+ */
+export function lengthNote(lyrics: string, maxSeconds: number | undefined) {
+  if (!maxSeconds || estimatedSeconds(lyrics) < maxSeconds * 0.9) return null;
+  const minutes = Math.round(maxSeconds / 60);
+  return `Songs can be up to about ${minutes} minutes on this computer. These lyrics may be cut off at the end.`;
+}
+
 export function addSection(lyrics: string, section: string): string {
   const tag = `[${section}]\n`;
   if (!lyrics.trim()) return tag;

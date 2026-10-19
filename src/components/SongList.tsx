@@ -1,5 +1,6 @@
 import { Check, Heart, Pause, Play, RotateCcw, Square } from "lucide-react";
 import CoverArt from "./CoverArt";
+import SongStatus from "./SongStatus";
 import SongMenu, { type SongActions } from "./SongMenu";
 import Waveform from "./Waveform";
 import {
@@ -213,9 +214,11 @@ export default function SongList(props: SongListProps) {
                   <div className="card-text">
                     {title(song)}
                     <p>
-                      {song.state === "completed"
-                        ? song.request.style
-                        : statusLabel(song)}
+                      {song.state === "completed" ? (
+                        song.request.style
+                      ) : (
+                        <SongStatus song={song} />
+                      )}
                     </p>
                   </div>
                   {trailing(song)}
@@ -264,7 +267,7 @@ export default function SongList(props: SongListProps) {
                   )}
                   {song.state !== "completed" && (
                     <span className={`song-status state-${song.state}`}>
-                      {statusLabel(song)}
+                      <SongStatus song={song} />
                     </span>
                   )}
                 </div>

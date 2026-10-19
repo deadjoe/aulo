@@ -19,6 +19,7 @@ pub struct EngineStatus {
     /// True only when the engine started and found a supported accelerator.
     pub generation_ready: bool,
     pub engine_version: Option<String>,
+    pub torch_version: Option<String>,
     pub device: Option<String>,
     pub backend: Option<String>,
 }
@@ -30,6 +31,7 @@ impl EngineStatus {
             message,
             generation_ready: false,
             engine_version: None,
+            torch_version: None,
             device: None,
             backend: None,
         }
@@ -73,6 +75,8 @@ struct Probe {
     event: String,
     engine_version: String,
     yue_version: String,
+    #[serde(default)]
+    torch_version: Option<String>,
     device: Option<String>,
     backend: Option<String>,
     /// Why there is no backend: `missing_engine` or `no_accelerator`.
@@ -101,6 +105,7 @@ fn parse_probe(bytes: &[u8]) -> Result<EngineStatus, String> {
         // This computer's engine (GGUF) should ship inside Aulo.
         return Ok(EngineStatus {
             engine_version: Some(probe.engine_version),
+            torch_version: probe.torch_version,
             device: probe.device,
             ..EngineStatus::unavailable(
                 "not_installed",
@@ -118,6 +123,7 @@ fn parse_probe(bytes: &[u8]) -> Result<EngineStatus, String> {
         },
         generation_ready: ready,
         engine_version: Some(probe.engine_version),
+        torch_version: probe.torch_version,
         device: probe.device,
         backend: probe.backend,
     })
