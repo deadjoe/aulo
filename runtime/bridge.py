@@ -202,9 +202,9 @@ def validate_command(command):
                "styleInfluence", "seed", "modelRoot", "outputRoot"}
     if set(command) - allowed:
         raise ValueError("Unexpected generation fields.")
-    for key, limit in (("style", 1000), ("lyrics", 16000)):
+    for key in ("style", "lyrics"):
         value = command.get(key, "")
-        if not isinstance(value, str) or len(value) > limit:
+        if not isinstance(value, str) or (key == "lyrics" and len(value) > 16000):
             raise ValueError(f"Invalid {key}.")
     if not isinstance(command.get("instrumental", False), bool):
         raise ValueError("Invalid instrumental choice.")

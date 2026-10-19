@@ -43,7 +43,7 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(bridge.validate_command({"operation": "cancel", "workId": WORK_ID}),
                          "cancel")
         self.assertEqual(bridge.validate_command({"operation": "shutdown"}), "shutdown")
-        for update in [{"style": "x" * 1001}, {"lyrics": None}, {"outputRoot": "../escape"},
+        for update in [{"style": None}, {"lyrics": "x" * 16001}, {"lyrics": None}, {"outputRoot": "../escape"},
                        {"style": "", "lyrics": ""}, {"backend": "custom"}, {"abc": "X:1"},
                        {"workId": "../x"}, {"weirdness": 101}, {"styleInfluence": True},
                        {"vocal": "robot"}, {"instrumental": "yes"}, {"lyrics": ""},
@@ -51,6 +51,17 @@ class BridgeTests(unittest.TestCase):
                        {"seed": 1.5}]:
             with self.assertRaises(ValueError):
                 bridge.validate_command(request | update)
+
+    def test_long_style_survives_the_command_reader(self):
+        style = "warm piano, " * 200
+        request = generate_request(BRIDGE.parent, style=style)
+        stream = io.BytesIO((json.dumps(request) + "\n").encode())
+        commands = bridge.Commands(stream)
+        commands.start().thread.join(2)
+        operation, received = commands.queue.get_nowait()
+        self.assertEqual(operation, "generate")
+        self.assertEqual(received["style"], style)
+        self.assertEqual(bridge.song_texts(received)[0], style.strip())
 
     def test_simple_controls_map_to_groove_defaults_and_recipes(self):
         self.assertIsNone(bridge.cfg_scale(0))

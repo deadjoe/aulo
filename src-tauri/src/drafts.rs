@@ -21,15 +21,6 @@ pub enum Kind {
     Styles,
 }
 
-impl Kind {
-    fn max_text(self) -> usize {
-        match self {
-            Self::Lyrics => 16_000,
-            Self::Styles => 1_000,
-        }
-    }
-}
-
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Saved {
@@ -77,7 +68,7 @@ impl SavedFile {
         if text.is_empty() {
             return Err("There’s nothing to save yet.".into());
         }
-        if text.chars().count() > kind.max_text() {
+        if matches!(kind, Kind::Lyrics) && text.chars().count() > 16_000 {
             return Err("That’s too long to save.".into());
         }
         let list = self.list_mut(kind);
@@ -242,7 +233,7 @@ mod tests {
         let mut id = ids();
         assert!(saved.remember(Kind::Styles, "", "   ", 1, &mut id).is_err());
         assert!(saved
-            .remember(Kind::Styles, "", &"x".repeat(1001), 1, &mut id)
+            .remember(Kind::Lyrics, "", &"x".repeat(16_001), 1, &mut id)
             .is_err());
         for i in 0..(LIMIT + 5) {
             saved
@@ -251,6 +242,17 @@ mod tests {
         }
         assert_eq!(saved.styles.len(), LIMIT);
         assert_eq!(saved.styles[0].text, format!("style {}", LIMIT + 4));
+    }
+
+    #[test]
+    fn long_styles_are_saved_without_truncation() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut saved = SavedFile::default();
+        let text = "warm piano, ".repeat(200);
+        saved.remember(Kind::Styles, "", &text, 1, ids()).unwrap();
+        save(dir.path(), &saved).unwrap();
+        let loaded = load(dir.path());
+        assert_eq!(loaded.styles[0].text, text.trim());
     }
 
     #[test]

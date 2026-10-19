@@ -45,9 +45,6 @@ impl SongRequest {
         if self.title.chars().count() > 120 {
             return Err("Song titles can be up to 120 characters.".into());
         }
-        if self.style.chars().count() > 1000 {
-            return Err("Keep the style description under 1,000 characters.".into());
-        }
         if self.lyrics.chars().count() > 16000 {
             return Err("These lyrics are too long for one song.".into());
         }
