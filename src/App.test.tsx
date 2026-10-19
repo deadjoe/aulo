@@ -128,18 +128,85 @@ describe("create panel", () => {
     expect(screen.getByLabelText("Song description")).toHaveValue("warm piano");
   });
 
-  it("offers style ideas, sections and creative controls in advanced mode", async () => {
+  it("keeps advanced styles clean and offers sections and creative controls", async () => {
     const user = userEvent.setup();
     render(<App />);
     await user.click(screen.getByRole("tab", { name: "Advanced" }));
-    const chip = screen.getAllByRole("button", { name: /dreamy indie pop/ })[0];
-    await user.click(chip);
-    expect(screen.getByLabelText("Styles")).toHaveValue("dreamy indie pop");
+    expect(
+      screen.queryByRole("button", { name: /dreamy indie pop/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Show other style ideas" }),
+    ).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "+ Chorus" }));
     expect(screen.getByLabelText("Lyrics")).toHaveValue("[Chorus]\n");
     expect(screen.getByRole("radio", { name: "Female" })).toBeVisible();
     expect(screen.getByLabelText("Weirdness")).toHaveValue("50");
     expect(screen.getByLabelText("Style influence")).toHaveValue("50");
+  });
+
+  it("undoes, saves, clears and brings back styles", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole("tab", { name: "Advanced" }));
+    const styles = screen.getByLabelText("Styles");
+    await user.type(styles, "warm folk");
+    await user.click(screen.getByRole("button", { name: "Save styles" }));
+    expect(await screen.findByText("Saved to your styles.")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Clear styles" }));
+    expect(styles).toHaveValue("");
+    await user.click(screen.getByRole("button", { name: "Undo changes" }));
+    expect(styles).toHaveValue("warm folk");
+    await user.click(screen.getByRole("button", { name: "Clear styles" }));
+    await user.click(screen.getByRole("button", { name: "Saved styles" }));
+    const list = screen.getByRole("dialog", { name: "Saved styles" });
+    await user.click(within(list).getByRole("button", { name: /^warm folk/ }));
+    expect(styles).toHaveValue("warm folk");
+    expect(
+      screen.queryByRole("dialog", { name: "Saved styles" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("undoes lyrics, starts a new draft and edits in full screen", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole("tab", { name: "Advanced" }));
+    const lyrics = screen.getByLabelText("Lyrics");
+    await user.type(lyrics, "City lights");
+    await user.click(screen.getByRole("button", { name: "+ Verse" }));
+    expect(lyrics).toHaveValue("City lights\n\n[Verse]\n");
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    expect(lyrics).toHaveValue("City lights");
+    await user.click(screen.getByRole("button", { name: "Redo" }));
+    expect(lyrics).toHaveValue("City lights\n\n[Verse]\n");
+    // A new draft keeps the old words in Saved lyrics.
+    await user.click(screen.getByRole("button", { name: "New draft" }));
+    expect(lyrics).toHaveValue("");
+    await user.click(screen.getByRole("button", { name: "Saved lyrics" }));
+    const saved = screen.getByRole("dialog", { name: "Saved lyrics" });
+    expect(within(saved).getAllByText("City lights")[0]).toBeVisible();
+    await user.click(
+      within(saved).getByRole("button", { name: "Delete City lights" }),
+    );
+    expect(within(saved).getByText(/Delete “City lights”/)).toBeVisible();
+    await user.click(within(saved).getByRole("button", { name: "Cancel" }));
+    await user.click(
+      within(saved).getByRole("button", { name: /^City lights/ }),
+    );
+    expect(lyrics).toHaveValue("City lights\n\n[Verse]");
+
+    await user.click(
+      screen.getByRole("button", { name: "Open full screen lyrics editor" }),
+    );
+    const editor = screen.getByRole("dialog", { name: "Lyrics editor" });
+    const big = within(editor).getByLabelText("Lyrics");
+    expect(big).toHaveFocus();
+    await user.type(big, "\nNeon");
+    await user.keyboard("{Escape}");
+    expect(
+      screen.queryByRole("dialog", { name: "Lyrics editor" }),
+    ).not.toBeInTheDocument();
+    expect(lyrics).toHaveValue("City lights\n\n[Verse]\nNeon");
   });
 
   it("starts a song only when Aulo is ready", async () => {

@@ -717,6 +717,7 @@ export default function App() {
               creating={creating}
               onCreate={() => void create()}
               onOpenSetup={openSetup}
+              onNotify={notify}
               saveTo={
                 <SaveToMenu
                   options={liveWorkspaces.map((w) => ({

@@ -1,5 +1,11 @@
 # Validation record
 
+## Lyrics and styles tools — 2026-10-19
+
+- Native tests: saving the same words moves them up instead of repeating, empty or oversized text is refused, lists stay at 200, deleting and the file round trip.
+- Component tests: no style chips in Advanced; Undo/Redo across typing and sections; New draft keeps the old lyrics in Saved lyrics; deleting asks first; picking loads; full-screen editing returns with Escape; Save, Clear, Undo changes and Saved styles; undo grouping.
+- Reviewed in a browser preview: the toolbars, the Saved lyrics list and the full-screen editor.
+
 ## Covers — 2026-10-19
 
 - `cover.test.ts`: styles map to their compositions (specific genres before broad ones), covers are stable per song and vary between songs and for unknown styles, and nothing a person wrote reaches the SVG markup.
