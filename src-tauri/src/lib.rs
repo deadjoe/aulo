@@ -9,6 +9,7 @@ mod settings;
 mod share;
 mod songs;
 mod support;
+mod version;
 use serde::Serialize;
 use sysinfo::{Disks, System};
 use tauri::Manager;
@@ -285,7 +286,7 @@ fn ask_before_quitting(app: &tauri::AppHandle) -> bool {
 }
 
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         // First: a second launch brings this window forward instead of loading a second
         // music engine (and a second copy of the model in memory).
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -297,7 +298,11 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_notification::init());
+    // Windows has no app menu; the macOS one names the build in its About panel.
+    #[cfg(target_os = "macos")]
+    let builder = builder.menu(version::menu);
+    builder
         .manage(models::ModelManager::default())
         .manage(engine::EngineCache::default())
         .manage(songs::SongService::default())
@@ -343,6 +348,7 @@ pub fn run() {
             songs::engine_memory,
             songs::release_engine,
             support::storage_usage,
+            version::app_version,
             support::save_report
         ])
         .on_window_event(|window, event| {
@@ -424,6 +430,9 @@ mod tests {
         let version = env!("CARGO_PKG_VERSION");
         assert_eq!(read("tauri.conf.json")["version"], version);
         assert_eq!(read("../package.json")["version"], version);
+        let lock = read("../package-lock.json");
+        assert_eq!(lock["version"], version);
+        assert_eq!(lock["packages"][""]["version"], version);
     }
 
     #[test]

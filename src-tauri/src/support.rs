@@ -355,14 +355,11 @@ pub fn report_sections(r: ReportInputs) -> Vec<Section> {
     let aulo = vec![
         (
             "Version".to_string(),
-            format!(
-                "{version} ({} build)",
-                if cfg!(debug_assertions) {
-                    "development"
-                } else {
-                    "release"
-                }
-            ),
+            if cfg!(debug_assertions) {
+                format!("{version}, debug build")
+            } else {
+                version
+            },
         ),
         ("Data folder".into(), data.clone()),
         (
@@ -501,7 +498,7 @@ pub async fn save_report(
     let creation = crate::songs::creation_status(app.clone()).await;
     let models = crate::models::report_lines(&app, &app.state::<crate::models::ModelManager>());
     let settings = crate::settings::current(&app);
-    let version = app.package_info().version.to_string();
+    let version = crate::version::display();
     let resources = crate::engine::resources(&app).ok();
     tauri::async_runtime::spawn_blocking(move || {
         let hardware = crate::collect_hardware(base.clone());
@@ -761,7 +758,7 @@ mod tests {
         failed.failure = Some("graphics_driver".into());
         failed.stage = Some("preparing".into());
         let sections = report_sections(ReportInputs {
-            version: "0.1.0".into(),
+            version: "0.8.0 (7db2b63)".into(),
             base: r"C:\Users\张三\AppData\Local\studio.aulo.desktop".into(),
             settings: Default::default(),
             hardware: crate::Hardware {

@@ -28,7 +28,7 @@ vi.mock("../lib/settings", async (importOriginal) => ({
 }));
 vi.mock("../lib/songs", async (importOriginal) => ({
   ...(await importOriginal<typeof songs>()),
-  appVersion: vi.fn().mockResolvedValue("0.2.0"),
+  appVersion: vi.fn().mockResolvedValue("0.8.0 (7db2b63)"),
   deleteSongs: vi.fn((ids: string[]) => Promise.resolve(ids)),
 }));
 
@@ -234,7 +234,7 @@ describe("Settings › Help & About", () => {
   it("saves a problem report where the person chooses", async () => {
     const user = userEvent.setup();
     const props = open("about");
-    expect(await screen.findByText("Version 0.2.0")).toBeVisible();
+    expect(await screen.findByText("Version 0.8.0 (7db2b63)")).toBeVisible();
     expect(
       screen.getByText(
         /none of your songs, lyrics, styles, titles or your name/,
