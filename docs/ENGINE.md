@@ -4,7 +4,7 @@ Aulo calls the existing installed `yue2_groove.adapter`; it does not import Grad
 
 ## The bundled engine
 
-The engine ships inside Aulo. `scripts/build_engine.py` (`npm run engine`) produces `src-tauri/engine/`: a relocatable CPython 3.12 from python-build-standalone with YuE2 0.1.6, YUE2 // GROOVE 1.0.10 (installed without its web UI) and PyTorch, using GROOVE's validated dependency overrides. The build removes packaging tools, test suites, headers and console scripts, and keeps bytecode only for modules the engine imports; it then checks that the interpreter starts in isolation and that the adapter imports. On Apple silicon the engine is about 690 MB on disk, and the DMG about 200 MB.
+The engine ships inside Aulo. `scripts/build_engine.py` (`npm run engine`) produces `src-tauri/engine/`: a relocatable CPython 3.12 from python-build-standalone with YuE2 0.1.6, YUE2 // GROOVE 1.0.10 (installed without its web UI) and PyTorch, using GROOVE's validated dependency overrides. Windows gets PyPI's CPU-only PyTorch: it runs only the GGUF engine, whose yue2.cpp binaries bring their own CUDA, so a CUDA PyTorch would add about 2.5 GB that is never used. The build fails if a Windows engine ends up with a CUDA PyTorch. The build removes packaging tools, test suites, headers and console scripts, and keeps bytecode only for modules the engine imports; it then checks that the interpreter starts in isolation and that the adapter imports. On Apple silicon the engine is about 690 MB on disk, and the DMG about 200 MB.
 
 `npm run bundle` builds the app with `src-tauri/tauri.bundle.conf.json`, which adds the engine as an app resource (`Aulo.app/Contents/Resources/engine`). A person who installs Aulo never installs Python or anything else; after the music models are prepared, Create works. `.github/workflows/package-macos.yml` builds the engine and the DMG on demand and on version tags.
 
@@ -20,7 +20,7 @@ The probe checks the installed GROOVE 1.0.10 and YuE2 0.1.6 versions, imports th
 
 A successful probe is cached for the session. Creation requires both a ready engine and verified models; `creation_status` reports which one is missing in plain language. The native host enforces a probe timeout, limits protocol output, checks the versioned reply, and reaps failed or timed-out children.
 
-GGUF engine binaries, when bundled, sit beside the interpreter in `engine/yue2cpp`; converted GGUF files are written to `models/gguf` under application data.
+GGUF engine binaries sit beside the interpreter in `engine/yue2cpp`; the GGUF model files are downloaded ready-made (see Engine plan).
 
 ## Generation
 
@@ -53,9 +53,13 @@ Aulo decides the engine from the hardware, never from a person's choice (`src-ta
 
 The bridge receives the plan as `AULO_ENGINE` (and `YUE2_GROOVE_GGUF_MAX_SEQ` for the small context) and runs exactly that engine; if the GGUF binaries are missing it reports a damaged install rather than switching engines. Without a plan (development) it falls back to GROOVE's `BACKEND=auto`. Development builds can force an engine with `AULO_FORCE_ENGINE=gguf|torch`.
 
+Once a plan is found it holds until Aulo quits, so the engine never changes under a running app. A computer that could not get a plan (no NVIDIA card found, for instance) is looked at again every 30 seconds, and at once when setup's Check again runs, so installing a driver unblocks creating without reopening Aulo.
+
 The GGUF engine's binaries are GROOVE's pinned yue2.cpp release (`e8b39f7`), fetched and checksum-verified by `scripts/build_engine.py` into `engine/yue2cpp`.
 
 **One set of weights per computer.** The model download follows the plan (`models::manifest`): the PyTorch engine downloads the official checkpoints (`manifests/music-models.json`, 7.79 GB); the GGUF engine downloads only the published `YuE2-3B-Q8_0.gguf` and `YuE2-Vae-F32.gguf` (pinned revision of `Serveurperso/YuE2-GGUF`, which GROOVE documents as tensor-for-tensor identical to its own conversion) plus the tokenizer, configs and licences from the official repositories (`manifests/music-models-gguf.json`, 4.34 GB). Nothing is converted on the computer. The engine is pointed at that folder's `gguf/` directory, which GROOVE's engine uses as ready-made files.
+
+A computer without a plan gets no manifest at all: setup shows why it cannot make songs and offers neither a download nor a folder to check, because either could be the wrong set. When a manifest changes (an update to new models), files the new manifest lists at the same place and size are moved over from the earlier folder under `<app-data>/models/` and checked again, only the rest is downloaded, and the earlier folder is deleted. Choosing a folder of one's own also deletes Aulo's downloaded copy once the chosen folder is verified. A folder the person chose is never changed.
 
 On Windows, the graphics card and its own memory come from `nvidia-smi`, which every NVIDIA driver installs (also looked for in its older install folder); if it cannot be run, DXGI, which is part of Windows, answers instead.
 
@@ -74,7 +78,7 @@ Works are folders under `<app-data>/library/<id>/` with an atomically replaced `
 
 ## Remaining integration gates
 
-- The Windows engine (CUDA PyTorch or the GGUF engine) and its installer size.
+- Building and validating the Windows engine (GGUF on CPU-only PyTorch) and its installer size.
 - Signing and notarizing every binary in the bundled engine.
 - File-level delta updates, so an app update downloads only changed files and the engine layer is reused.
 - Windows device validation of the GGUF and PyTorch paths through Aulo.

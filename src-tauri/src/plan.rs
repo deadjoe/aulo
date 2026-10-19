@@ -5,6 +5,11 @@
 //! Windows). People never choose: a computer's hardware does not change, so the
 //! plan is the same on every start and nothing about it is shown or adjustable.
 
+use std::{
+    sync::Mutex,
+    time::{Duration, Instant},
+};
+
 use serde::Serialize;
 
 use crate::Hardware;
@@ -77,25 +82,71 @@ pub fn plan(h: &Hardware) -> Result<Plan, &'static str> {
     }
 }
 
-/// This computer's plan, worked out once per run.
-pub fn current() -> Result<Plan, &'static str> {
-    static PLAN: std::sync::OnceLock<Result<Plan, &'static str>> = std::sync::OnceLock::new();
-    *PLAN.get_or_init(|| {
-        // Development builds can try the other engine on the same computer.
-        #[cfg(debug_assertions)]
-        if let Ok(forced) = std::env::var("AULO_FORCE_ENGINE") {
-            let engine = if forced == "gguf" {
-                Engine::Gguf
-            } else {
-                Engine::Torch
-            };
-            return Ok(Plan {
-                engine,
-                context_cap: None,
-            });
+/// How often a computer that could not make songs is looked at again on its own.
+/// Asking runs `nvidia-smi` on Windows, which can take seconds.
+const RETRY_AFTER: Duration = Duration::from_secs(30);
+
+/// The plan worked out so far. A plan, once found, holds for the rest of the run:
+/// the engine never changes under a running app. A computer that could not make
+/// songs is looked at again, because a driver installed meanwhile changes the answer.
+#[derive(Default)]
+struct Decision(Option<(Result<Plan, &'static str>, Instant)>);
+
+impl Decision {
+    /// The plan to use now; `decide` is called only when there is none worth keeping.
+    fn get(
+        &mut self,
+        now: Instant,
+        decide: impl FnOnce() -> Result<Plan, &'static str>,
+    ) -> Result<Plan, &'static str> {
+        match self.0 {
+            Some((Ok(plan), _)) => return Ok(plan),
+            Some((Err(reason), at)) if now.duration_since(at) < RETRY_AFTER => return Err(reason),
+            _ => {}
         }
+        let result = decide();
+        self.0 = Some((result, now));
+        result
+    }
+
+    /// The person asked Aulo to check the computer again (`fresh` is what it found).
+    fn recheck(&mut self, now: Instant, fresh: Result<Plan, &'static str>) {
+        if !matches!(self.0, Some((Ok(_), _))) {
+            self.0 = Some((fresh, now));
+        }
+    }
+}
+
+static DECISION: Mutex<Decision> = Mutex::new(Decision(None));
+
+/// This computer's plan. Once found it holds for the run; until then it is looked
+/// at again every `RETRY_AFTER`, and at once when the person checks again.
+pub fn current() -> Result<Plan, &'static str> {
+    // Development builds can try the other engine on the same computer.
+    #[cfg(debug_assertions)]
+    if let Ok(forced) = std::env::var("AULO_FORCE_ENGINE") {
+        let engine = if forced == "gguf" {
+            Engine::Gguf
+        } else {
+            Engine::Torch
+        };
+        return Ok(Plan {
+            engine,
+            context_cap: None,
+        });
+    }
+    DECISION.lock().unwrap().get(Instant::now(), || {
         plan(&crate::collect_hardware(std::env::temp_dir()))
     })
+}
+
+/// Setup's "Check again": a computer that could not make songs gets a new answer
+/// from what was just found. A plan already in use is kept.
+pub fn recheck(hardware: &Hardware) {
+    DECISION
+        .lock()
+        .unwrap()
+        .recheck(Instant::now(), plan(hardware));
 }
 
 #[cfg(test)]
@@ -168,6 +219,41 @@ mod tests {
         assert!(plan(&pc(None))
             .unwrap_err()
             .contains("couldn’t find an NVIDIA"));
+    }
+
+    #[test]
+    fn a_plan_once_found_never_changes_during_the_run() {
+        let mut decision = Decision::default();
+        let start = Instant::now();
+        assert_eq!(decision.get(start, || Ok(GGUF)), Ok(GGUF));
+        // Neither time nor a new check replaces it.
+        let later = start + Duration::from_secs(86_400);
+        assert_eq!(decision.get(later, || unreachable!()), Ok(GGUF));
+        decision.recheck(later, Ok(TORCH));
+        decision.recheck(later, Err("no card"));
+        assert_eq!(decision.get(later, || unreachable!()), Ok(GGUF));
+    }
+
+    #[test]
+    fn a_computer_that_could_not_make_songs_is_looked_at_again() {
+        let mut decision = Decision::default();
+        let start = Instant::now();
+        assert_eq!(decision.get(start, || Err("no card")), Err("no card"));
+        // Not asked again straight away: that runs nvidia-smi.
+        assert_eq!(
+            decision.get(start + Duration::from_secs(5), || unreachable!()),
+            Err("no card")
+        );
+        // Asked again on its own after a while...
+        assert_eq!(
+            decision.get(start + RETRY_AFTER, || Ok(GGUF_SMALL)),
+            Ok(GGUF_SMALL)
+        );
+        // ...or at once when the person checks again after updating the driver.
+        let mut decision = Decision::default();
+        assert!(decision.get(start, || Err("no card")).is_err());
+        decision.recheck(start, Ok(GGUF));
+        assert_eq!(decision.get(start, || unreachable!()), Ok(GGUF));
     }
 
     #[test]

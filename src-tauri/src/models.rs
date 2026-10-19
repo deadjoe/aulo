@@ -79,12 +79,11 @@ impl Manifest {
     }
 }
 /// The models this computer's engine runs, and nothing else: the PyTorch checkpoints
-/// (7.8 GB) or the GGUF files with the tokenizer and licences (4.3 GB).
+/// (7.8 GB) or the GGUF files with the tokenizer and licences (4.3 GB). A computer
+/// without a plan gets none: guessing would download weights it may never use.
 pub fn manifest() -> Result<Manifest, String> {
-    let engine = crate::plan::current()
-        .map(|plan| plan.engine)
-        .unwrap_or(crate::plan::Engine::Torch);
-    manifest_for(engine)
+    let plan = crate::plan::current().map_err(String::from)?;
+    manifest_for(plan.engine)
 }
 
 pub fn manifest_for(engine: crate::plan::Engine) -> Result<Manifest, String> {
@@ -440,6 +439,7 @@ pub fn download_models(
         let _guard = BusyGuard(manager.clone());
         let result = (|| {
             let _lock = lock_storage(&base)?;
+            adopt_previous(&base, &root, &m)?;
             fs::create_dir_all(&root).map_err(io_error)?;
             let client = Client::builder()
                 .https_only(true)
@@ -493,6 +493,64 @@ pub fn remove_model_files(base: &Path) -> Result<Option<PathBuf>, String> {
     Ok(chosen)
 }
 
+/// Delete every folder in Aulo's own `models` folder except `keep`, any folder holding
+/// it and anything inside it. A link is removed, never followed. One set of weights
+/// per computer.
+fn remove_managed_except(base: &Path, keep: &Path) -> Result<(), String> {
+    let Ok(entries) = fs::read_dir(base.join("models")) else {
+        return Ok(());
+    };
+    // Compare real locations too: the same folder can be named through a link.
+    let real_keep = fs::canonicalize(keep).unwrap_or_else(|_| keep.to_path_buf());
+    let related = |a: &Path, b: &Path| a.starts_with(b) || b.starts_with(a);
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let real = fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+        if related(&path, keep) || related(&real, &real_keep) {
+            continue;
+        }
+        let removed = match fs::symlink_metadata(&path) {
+            Ok(meta) if meta.file_type().is_symlink() => fs::remove_file(&path),
+            Ok(meta) if meta.is_dir() => fs::remove_dir_all(&path),
+            _ => continue,
+        };
+        removed.map_err(|_| {
+            "Aulo couldn’t remove an older copy of the music models. Close other apps using them and try again."
+                .to_string()
+        })?;
+    }
+    Ok(())
+}
+
+/// Before downloading `m` into `root`: files an earlier model set left in Aulo's own
+/// folder (after an update, say) that `m` lists at the same place and size are moved
+/// over, then every earlier folder is deleted. Only what changed is downloaded again,
+/// and there is never a second set of weights. Moved files are checked like any other.
+fn adopt_previous(base: &Path, root: &Path, m: &Manifest) -> Result<(), String> {
+    if let Ok(entries) = fs::read_dir(base.join("models")) {
+        for entry in entries.flatten() {
+            let old = entry.path();
+            let is_dir = fs::symlink_metadata(&old).is_ok_and(|meta| meta.is_dir());
+            if old == root || !is_dir {
+                continue;
+            }
+            for file in &m.files {
+                let (from, to) = (old.join(&file.path), root.join(&file.path));
+                let same_size = fs::symlink_metadata(&from)
+                    .is_ok_and(|meta| meta.is_file() && meta.len() == file.bytes);
+                if same_size && !to.exists() {
+                    if let Some(parent) = to.parent() {
+                        fs::create_dir_all(parent).map_err(io_error)?;
+                    }
+                    // Best effort: a file that cannot be moved is downloaded instead.
+                    let _ = fs::rename(&from, &to);
+                }
+            }
+        }
+    }
+    remove_managed_except(base, root)
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemovedModels {
@@ -507,7 +565,8 @@ pub async fn remove_models(
     manager: tauri::State<'_, ModelManager>,
     songs: tauri::State<'_, crate::songs::SongService>,
 ) -> Result<RemovedModels, String> {
-    let m = manifest()?;
+    // Removing works on any computer, even one that cannot make songs.
+    let m = manifest().ok();
     let base = base_path(&app)?;
     if manager
         .0
@@ -534,7 +593,7 @@ pub async fn remove_models(
     .map_err(|e| e.to_string())?;
     // Whatever happened, read the state back from disk: after a partial removal the
     // models must not be considered ready, and after a refusal they still are.
-    *manager.0.status.lock().unwrap() = Some(restore_status(&base_for_status, &m));
+    *manager.0.status.lock().unwrap() = m.map(|m| restore_status(&base_for_status, &m));
     result.map(|(kept, _)| RemovedModels {
         kept_folder: kept.map(|p| p.to_string_lossy().into_owned()),
     })
@@ -562,6 +621,8 @@ pub fn verify_models(
         let result = (|| {
             let _lock = lock_storage(&base)?;
             verify_existing(&root, &m, &manager)?;
+            // From now on these are the models; Aulo's own copy would be a second set.
+            remove_managed_except(&base, &root)?;
             save_verified(&base, &root, &m)?;
             manager.phase(
                 "verified",

@@ -138,9 +138,14 @@ pub(crate) fn creation_hardware_blocker() -> Option<&'static str> {
 #[tauri::command]
 async fn inspect_hardware(app: tauri::AppHandle) -> Result<Hardware, String> {
     let path = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    tauri::async_runtime::spawn_blocking(move || collect_hardware(path))
-        .await
-        .map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        let hardware = collect_hardware(path);
+        // "Check again" after installing a driver must be able to unblock creating.
+        plan::recheck(&hardware);
+        hardware
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 pub(crate) fn collect_hardware(path: std::path::PathBuf) -> Hardware {

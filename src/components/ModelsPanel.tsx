@@ -31,6 +31,8 @@ export default function ModelsPanel() {
   const [plan, setPlan] = useState<ModelPlan | null>(null);
   const [status, setStatus] = useState<ModelStatus | null>(null);
   const [error, setError] = useState("");
+  // Why this computer gets no music models, when it cannot make songs.
+  const [blocked, setBlocked] = useState("");
   const [pending, setPending] = useState(false);
   const [accepted, setAccepted] = useState(false);
   const [pauseRequested, setPauseRequested] = useState(false);
@@ -46,13 +48,18 @@ export default function ModelsPanel() {
           getModelStatus(),
         ]);
         if (!cancelled) {
+          setBlocked("");
           setPlan(nextPlan);
           setStatus(nextStatus);
           busy = modelOperationActive(nextStatus);
           if (!modelOperationActive(nextStatus)) setPauseRequested(false);
         }
       } catch (e) {
-        if (!cancelled) setError(String(e));
+        if (!cancelled) {
+          // Never offer a download that may be the wrong set of models.
+          setPlan(null);
+          setBlocked(e instanceof Error ? e.message : String(e));
+        }
       }
       // Live progress while preparing; an occasional check otherwise.
       if (!cancelled) timer = setTimeout(() => void poll(), busy ? 1000 : 4000);
@@ -131,6 +138,11 @@ export default function ModelsPanel() {
         <div className="notice">
           <CircleHelp size={17} />
           <p>Open the Aulo app to download the music models.</p>
+        </div>
+      ) : blocked && !active ? (
+        <div className="notice">
+          <CircleHelp size={17} />
+          <p>{blocked}</p>
         </div>
       ) : (
         <>
@@ -278,7 +290,7 @@ export default function ModelsPanel() {
               <ArrowRight size={17} />
             </button>
           )}
-          {!status && !error && (
+          {!status && !error && !blocked && (
             <p className="helper">
               <LoaderCircle size={13} className="spin" /> Looking for the music
               models…
