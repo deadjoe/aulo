@@ -67,6 +67,17 @@ fn requests_need_a_sound_and_words_or_an_instrumental() {
 }
 
 #[test]
+fn long_styles_are_accepted_without_truncation() {
+    let mut r = request();
+    r.style = "warm piano, ".repeat(200);
+    assert!(r.validate().is_ok());
+    let command = generate_command(ID, &r, 42, Path::new("/models"), Path::new("/output"));
+    assert_eq!(command["style"].as_str(), Some(r.style.as_str()));
+    r.lyrics = "x".repeat(16_001);
+    assert!(r.validate().is_err());
+}
+
+#[test]
 fn ids_are_random_lowercase_hex() {
     let id = new_id();
     assert!(valid_id(&id));
