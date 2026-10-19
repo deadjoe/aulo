@@ -22,6 +22,7 @@ import {
   pauseModels,
   openModelLicense,
   paceText,
+  replacedBytes,
   verifyModels,
   type ModelPlan,
   type Sample,
@@ -40,7 +41,10 @@ export default function ModelsPanel() {
   const [accepted, setAccepted] = useState(false);
   const [pauseRequested, setPauseRequested] = useState(false);
   // A folder waiting for the person to agree that Aulo's own copy is deleted.
-  const [replacing, setReplacing] = useState<string | null>(null);
+  const [replacing, setReplacing] = useState<{
+    folder: string;
+    bytes: number;
+  } | null>(null);
   const samples = useRef<Sample[]>([]);
   useEffect(() => {
     if (!desktop) return;
@@ -100,7 +104,8 @@ export default function ModelsPanel() {
     await action(async () => {
       const folder = await chooseModelFolder();
       if (!folder) return;
-      if (plan && plan.ownCopyBytes > 0) setReplacing(folder);
+      const bytes = await replacedBytes(folder);
+      if (bytes > 0) setReplacing({ folder, bytes });
       else await verifyModels(folder);
     });
   }
@@ -308,7 +313,7 @@ export default function ModelsPanel() {
               {verified && <ArrowRight size={17} />}
             </button>
           )}
-          {replacing && plan && (
+          {replacing && (
             <div
               className="settings-confirm"
               role="alertdialog"
@@ -317,9 +322,9 @@ export default function ModelsPanel() {
               <strong>Use the music models in this folder?</strong>
               <p>
                 Once Aulo has checked them, it deletes the copy it downloaded (
-                {formatBytes(plan.ownCopyBytes)}), so this computer keeps one
-                set. If this folder is moved or its drive is unplugged later,
-                Aulo needs to download the music models again.
+                {formatBytes(replacing.bytes)}), so this computer keeps one set.
+                If this folder is moved or its drive is unplugged later, Aulo
+                needs to download the music models again.
               </p>
               <div className="dialog-actions">
                 <button
@@ -331,7 +336,7 @@ export default function ModelsPanel() {
                 <button
                   className="danger-button"
                   onClick={() => {
-                    const folder = replacing;
+                    const { folder } = replacing;
                     setReplacing(null);
                     void action(() => verifyModels(folder));
                   }}

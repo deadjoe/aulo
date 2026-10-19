@@ -315,6 +315,7 @@ pub fn run() {
             models::model_status,
             models::download_models,
             models::verify_models,
+            models::replaced_bytes,
             models::pause_models,
             models::open_model_license,
             models::remove_models,

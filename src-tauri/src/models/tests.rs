@@ -431,6 +431,18 @@ fn an_update_to_new_models_reuses_unchanged_files_and_leaves_one_set() {
 }
 
 #[test]
+fn choosing_aulos_own_download_replaces_nothing() {
+    let temp = tempfile::tempdir().unwrap();
+    let base = temp.path();
+    let own = base.join("models/gguf-v1");
+    fs::create_dir_all(&own).unwrap();
+    assert!(managed_except(base, &own).is_empty());
+    assert!(managed_except(base, &base.join("models")).is_empty());
+    let elsewhere = tempfile::tempdir().unwrap();
+    assert_eq!(managed_except(base, elsewhere.path()), [own]);
+}
+
+#[test]
 fn clearing_old_sets_keeps_the_folder_in_use_and_never_follows_links() {
     let temp = tempfile::tempdir().unwrap();
     let base = temp.path();

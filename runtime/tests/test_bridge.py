@@ -314,6 +314,15 @@ class FailureReasonTests(unittest.TestCase):
         elsewhere = FileNotFoundError(2, "No such file", "/tmp/out.flac")
         self.assertEqual(bridge.failure_reason(elsewhere, "/models"), "unknown")
 
+    def test_aulo_accepts_and_explains_every_reason_the_bridge_sends(self):
+        # songs.rs tests the other direction: every reason it accepts is sent here.
+        songs = (BRIDGE.parents[1] / "src-tauri" / "src" / "songs.rs").read_text(encoding="utf-8")
+        accepted = songs[songs.index("const ENGINE_FAILURES"):]
+        accepted = accepted[:accepted.index("];")]
+        sent = {reason for reason, _ in bridge.FAILURE_PATTERNS} | {"models_damaged", "unknown"}
+        for reason in sent:
+            self.assertIn(f'"{reason}"', accepted)
+
     def test_serve_sends_the_reason_with_the_failure(self):
         events = []
         engine = Mock()

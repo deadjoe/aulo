@@ -8,8 +8,6 @@ export interface ModelPlan {
   license: string;
   licenseUrl: string;
   fileCount: number;
-  /** What Aulo's own models folder holds; choosing another folder deletes it. */
-  ownCopyBytes: number;
 }
 export type ModelPhase =
   | "not_started"
@@ -41,6 +39,9 @@ export const downloadModels = (termsAccepted: boolean) =>
   invoke<void>("download_models", { termsAccepted });
 export const verifyModels = (folder: string) =>
   invoke<void>("verify_models", { folder });
+/** How much of Aulo's own download choosing `folder` would delete (0: nothing). */
+export const replacedBytes = (folder: string) =>
+  invoke<number>("replaced_bytes", { folder });
 export const pauseModels = () => invoke<void>("pause_models");
 export const modelOperationActive = (s: ModelStatus | null) =>
   !!s && ["checking", "verifying", "downloading", "retrying"].includes(s.phase);
