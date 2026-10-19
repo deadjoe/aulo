@@ -358,3 +358,30 @@ fn a_removal_that_stops_halfway_never_leaves_the_models_ready() {
     let state = restore_status(base.path(), &m);
     assert_eq!(state.phase, "not_started");
 }
+
+#[test]
+fn each_engine_downloads_only_its_own_weights() {
+    use crate::plan::Engine;
+    let torch = manifest_for(Engine::Torch).unwrap();
+    let gguf = manifest_for(Engine::Gguf).unwrap();
+    assert_ne!(torch.id, gguf.id);
+    let weights = |m: &Manifest| -> Vec<String> {
+        m.files
+            .iter()
+            .filter(|f| f.path.ends_with(".safetensors") || f.path.ends_with(".gguf"))
+            .map(|f| f.path.clone())
+            .collect()
+    };
+    assert_eq!(
+        weights(&torch),
+        ["YuE2-3B/model.safetensors", "YuE2-Vae/model.safetensors"]
+    );
+    assert_eq!(
+        weights(&gguf),
+        ["gguf/YuE2-3B-Q8_0.gguf", "gguf/YuE2-Vae-F32.gguf"]
+    );
+    // The GGUF engine still reads the tokenizer from the checkpoint folder.
+    assert!(gguf.files.iter().any(|f| f.path == "YuE2-3B/qwen.tiktoken"));
+    assert!(torch.total() > 7_700_000_000);
+    assert!(gguf.total() < 4_400_000_000);
+}

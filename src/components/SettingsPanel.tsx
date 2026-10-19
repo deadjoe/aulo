@@ -429,7 +429,7 @@ function ModelsSection({ notify }: { notify: (text: string) => void }) {
       {license}
       <Row
         title="Remove the music models"
-        detail="Frees about 7.8 GB. You can download them again at any time."
+        detail={`Frees about ${formatSize(status?.totalBytes ?? 0)}. You can download them again at any time.`}
       >
         <button
           className="secondary small danger"

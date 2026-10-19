@@ -50,7 +50,6 @@ import {
   removeFromPlaylist,
   renamePlaylist,
   renameWorkspace,
-  prepareEngine,
   revealSong,
   shareSong,
   trashSongs,
@@ -182,22 +181,6 @@ export default function App() {
     window.addEventListener("focus", refreshStatus);
     return () => window.removeEventListener("focus", refreshStatus);
   }, [explored, refreshStatus]);
-
-  // Readying the models for this computer's engine happens once, by itself.
-  const preparing = status?.blocker === "preparing";
-  useEffect(() => {
-    if (!preparing) return;
-    let active = true;
-    prepareEngine().then(
-      () => active && refreshStatus(),
-      (error: unknown) =>
-        active &&
-        notify(problem(error, "Aulo couldn’t get the music models ready.")),
-    );
-    return () => {
-      active = false;
-    };
-  }, [preparing, refreshStatus, notify]);
 
   useEffect(() => saveComposer(request), [request]);
 

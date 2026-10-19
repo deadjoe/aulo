@@ -26,14 +26,62 @@ pub(crate) struct Hardware {
     pub(crate) data_path: String,
 }
 
+/// The NVIDIA card and its own memory (VRAM, not the computer's memory). `nvidia-smi`
+/// is installed with every NVIDIA driver; DXGI, part of Windows itself, answers when it
+/// cannot be found or run.
 #[cfg(target_os = "windows")]
 fn nvidia_gpu() -> (Option<String>, Option<f64>) {
+    let smi = [
+        std::path::PathBuf::from("nvidia-smi"),
+        std::path::PathBuf::from(r"C:\Program Files\NVIDIA Corporation\NVSMI\nvidia-smi.exe"),
+    ];
+    smi.iter()
+        .find_map(|program| nvidia_smi(program))
+        .or_else(dxgi_nvidia)
+        .map(|(name, memory)| (Some(name), Some(memory)))
+        .unwrap_or((None, None))
+}
+
+/// The NVIDIA adapter with the most dedicated memory, from DXGI.
+#[cfg(target_os = "windows")]
+fn dxgi_nvidia() -> Option<(String, f64)> {
+    use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, IDXGIFactory1};
+    const NVIDIA: u32 = 0x10DE;
+    // SAFETY: plain COM calls on a factory owned here.
+    let factory: IDXGIFactory1 = unsafe { CreateDXGIFactory1() }.ok()?;
+    let mut best: Option<(String, f64)> = None;
+    for index in 0.. {
+        let Ok(adapter) = (unsafe { factory.EnumAdapters1(index) }) else {
+            break;
+        };
+        let Ok(desc) = (unsafe { adapter.GetDesc1() }) else {
+            continue;
+        };
+        if desc.VendorId != NVIDIA {
+            continue;
+        }
+        let len = desc
+            .Description
+            .iter()
+            .position(|&c| c == 0)
+            .unwrap_or(desc.Description.len());
+        let name = String::from_utf16_lossy(&desc.Description[..len]);
+        let memory = desc.DedicatedVideoMemory as f64 / 1_073_741_824.0;
+        if best.as_ref().is_none_or(|(_, m)| memory > *m) {
+            best = Some((name, memory));
+        }
+    }
+    best
+}
+
+#[cfg(target_os = "windows")]
+fn nvidia_smi(program: &std::path::Path) -> Option<(String, f64)> {
     use std::{
         os::windows::process::CommandExt,
         process::Command,
         time::{Duration, Instant},
     };
-    let mut child = match Command::new("nvidia-smi")
+    let mut child = match Command::new(program)
         .args([
             "--query-gpu=name,memory.total",
             "--format=csv,noheader,nounits",
@@ -44,7 +92,7 @@ fn nvidia_gpu() -> (Option<String>, Option<f64>) {
         .spawn()
     {
         Ok(child) => child,
-        Err(_) => return (None, None),
+        Err(_) => return None,
     };
     let started = Instant::now();
     loop {
@@ -56,13 +104,13 @@ fn nvidia_gpu() -> (Option<String>, Option<f64>) {
             _ => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return (None, None);
+                return None;
             }
         }
     }
     let output = match child.wait_with_output() {
         Ok(output) if output.status.success() => output,
-        _ => return (None, None),
+        _ => return None,
     };
     // Report one actual device; never add memory across GPUs.
     String::from_utf8_lossy(&output.stdout)
@@ -75,8 +123,6 @@ fn nvidia_gpu() -> (Option<String>, Option<f64>) {
             ))
         })
         .max_by(|a, b| a.1.total_cmp(&b.1))
-        .map(|(name, memory)| (Some(name), Some(memory)))
-        .unwrap_or((None, None))
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -136,7 +182,6 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             inspect_hardware,
             engine::engine_status,
-            engine::prepare_engine,
             models::model_plan,
             models::model_status,
             models::download_models,

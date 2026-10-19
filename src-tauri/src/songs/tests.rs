@@ -313,7 +313,8 @@ fn live_engine() -> Live {
     let output = PathBuf::from(std::env::var_os("AULO_DEV_OUTPUT").expect("Set AULO_DEV_OUTPUT"));
     fs::create_dir_all(&output).unwrap();
     let script = engine::bridge_script().unwrap();
-    let mut command = engine::bridge_command(&python, script.path(), &output);
+    let mut command = engine::bridge_command(&python, script.path());
+    command.env("YUE2_GROOVE_GGUF", models.join("gguf"));
     command.stderr(File::create(output.join("engine.log")).unwrap());
     let process = EngineProcess::start(
         command,

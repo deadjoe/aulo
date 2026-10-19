@@ -65,16 +65,34 @@ impl Manifest {
             {
                 return Err("The model catalog contains an invalid checksum or size.".into());
             }
-            if !file.url.starts_with("https://huggingface.co/m-a-p/") {
+            // The official checkpoints, or the GGUF files yue2.cpp's author publishes
+            // (GROOVE: the local Q8_0 conversion is tensor-for-tensor identical).
+            if !file.url.starts_with("https://huggingface.co/m-a-p/")
+                && !file
+                    .url
+                    .starts_with("https://huggingface.co/Serveurperso/YuE2-GGUF/")
+            {
                 return Err("The model source is not supported.".into());
             }
         }
         Ok(())
     }
 }
+/// The models this computer's engine runs, and nothing else: the PyTorch checkpoints
+/// (7.8 GB) or the GGUF files with the tokenizer and licences (4.3 GB).
 pub fn manifest() -> Result<Manifest, String> {
-    let m: Manifest = serde_json::from_str(include_str!("../../manifests/music-models.json"))
-        .map_err(|e| e.to_string())?;
+    let engine = crate::plan::current()
+        .map(|plan| plan.engine)
+        .unwrap_or(crate::plan::Engine::Torch);
+    manifest_for(engine)
+}
+
+pub fn manifest_for(engine: crate::plan::Engine) -> Result<Manifest, String> {
+    let text = match engine {
+        crate::plan::Engine::Torch => include_str!("../../manifests/music-models.json"),
+        crate::plan::Engine::Gguf => include_str!("../../manifests/music-models-gguf.json"),
+    };
+    let m: Manifest = serde_json::from_str(text).map_err(|e| e.to_string())?;
     m.validate()?;
     Ok(m)
 }
