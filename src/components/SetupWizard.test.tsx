@@ -5,7 +5,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import SetupWizard from "./SetupWizard";
 import { creationStatus } from "../lib/songs";
 
-vi.mock("./ModelsPanel", () => ({ default: () => null }));
+vi.mock("./ModelsPanel", () => ({
+  default: () => <p>Models panel</p>,
+}));
 vi.mock("../lib/models", () => ({
   desktopModelsAvailable: () => true,
   getModelStatus: vi.fn().mockResolvedValue({ modelsVerified: true }),
@@ -50,6 +52,8 @@ describe("the last setup step", () => {
       }),
     ).toBeVisible();
     expect(screen.getByText(/at least 8 GB of memory/)).toBeVisible();
+    // A download here could be the wrong set of models.
+    expect(screen.queryByText("Models panel")).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /Start creating/ }),
     ).not.toBeInTheDocument();

@@ -261,7 +261,8 @@ export default function SetupWizard({
             <>
               <h1>{finalTitle}</h1>
               <p className="lead">{finalLead}</p>
-              <ModelsPanel />
+              {/* No models for a computer that cannot make songs: they could be the wrong set. */}
+              {!unsupported && <ModelsPanel />}
             </>
           )}
           {error && (

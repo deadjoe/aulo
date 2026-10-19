@@ -1,5 +1,11 @@
 # Validation record
 
+## One set of models, Windows engine — 2026-10-19
+
+- Native tests: a plan once found never changes during a run; a computer without one is looked at again after 30 seconds or at once on Check again. Moving to a new model set reuses files of the same place and size, leaves a changed file to be downloaded, and deletes the earlier folder; clearing old sets keeps the folder in use and removes a link without following it.
+- Component tests: setup shows no models step on an unsupported computer, and the models panel offers no download or folder when there is no plan.
+- `scripts/build_engine.py` now installs PyPI's CPU-only Torch on Windows and refuses a CUDA build. The Windows engine build itself has not been run yet.
+
 ## Engine plan — 2026-10-19
 
 - Native tests cover the plan for Macs of 4, 8, 12, 15.6, 32 and 64 GB, Windows cards of 6 to 32 GB and none, and other computers; the probe reports missing GGUF binaries as a damaged install; the one-time preparation note is required only for GGUF and only for the same models. Bridge tests: the planned engine is used and never swapped, preparation requests and the preparation itself.

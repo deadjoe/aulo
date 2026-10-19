@@ -56,7 +56,7 @@ fn client() -> Client {
 
 #[test]
 fn bundled_manifest_is_pinned_and_contains_both_weights() {
-    let m = manifest().unwrap();
+    let m = manifest_for(crate::plan::Engine::Torch).unwrap();
     assert_eq!(m.files.len(), 17);
     assert_eq!(m.total(), 7_794_565_436);
     for file in &m.files {
@@ -221,7 +221,7 @@ fn managed_download_rejects_symlinks_before_writing() {
 #[test]
 #[ignore = "Explicit network smoke test: downloads one pinned 959-byte configuration file, never weights"]
 fn live_pinned_configuration_download() {
-    let mut m = manifest().unwrap();
+    let mut m = manifest_for(crate::plan::Engine::Torch).unwrap();
     m.files.retain(|f| f.path == "YuE2-3B/config.json");
     assert_eq!(m.total(), 959);
     let temp = tempfile::tempdir().unwrap();
@@ -384,4 +384,64 @@ fn each_engine_downloads_only_its_own_weights() {
     assert!(gguf.files.iter().any(|f| f.path == "YuE2-3B/qwen.tiktoken"));
     assert!(torch.total() > 7_700_000_000);
     assert!(gguf.total() < 4_400_000_000);
+}
+
+#[test]
+fn an_update_to_new_models_reuses_unchanged_files_and_leaves_one_set() {
+    let temp = tempfile::tempdir().unwrap();
+    let base = temp.path();
+    let old = base.join("models/yue2-source-v1");
+    let root = base.join("models/yue2-source-v2");
+    let same = fixture(b"unchanged weights");
+    fs::create_dir_all(old.join("YuE2-3B")).unwrap();
+    fs::write(old.join(&same.path), b"unchanged weights").unwrap();
+    fs::write(old.join("YuE2-3B/retired.bin"), b"no longer listed").unwrap();
+    let changed = ModelFile {
+        path: "YuE2-Vae/model.safetensors".into(),
+        bytes: 99,
+        ..fixture(b"x")
+    };
+    fs::create_dir_all(old.join("YuE2-Vae")).unwrap();
+    fs::write(old.join(&changed.path), b"a different size").unwrap();
+    let mut m = catalog(same.clone());
+    m.files.push(changed.clone());
+
+    adopt_previous(base, &root, &m).unwrap();
+
+    assert_eq!(
+        fs::read(root.join(&same.path)).unwrap(),
+        b"unchanged weights"
+    );
+    assert!(
+        !root.join(&changed.path).exists(),
+        "a changed file is downloaded"
+    );
+    assert!(!old.exists(), "the earlier set is gone");
+    let left: Vec<_> = fs::read_dir(base.join("models")).unwrap().collect();
+    assert_eq!(left.len(), 1);
+}
+
+#[test]
+fn clearing_old_sets_keeps_the_folder_in_use_and_never_follows_links() {
+    let temp = tempfile::tempdir().unwrap();
+    let base = temp.path();
+    let models = base.join("models");
+    let keep = models.join("chosen/inside");
+    fs::create_dir_all(&keep).unwrap();
+    fs::write(keep.join("weights"), b"in use").unwrap();
+    fs::create_dir_all(models.join("old-v1")).unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    fs::write(outside.path().join("theirs"), b"not Aulo's").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(outside.path(), models.join("link")).unwrap();
+
+    remove_managed_except(base, &keep).unwrap();
+
+    assert_eq!(fs::read(keep.join("weights")).unwrap(), b"in use");
+    assert!(!models.join("old-v1").exists());
+    #[cfg(unix)]
+    assert!(fs::symlink_metadata(models.join("link")).is_err());
+    assert!(outside.path().join("theirs").exists());
+    // Nothing to clear is fine too.
+    remove_managed_except(&base.join("missing"), &keep).unwrap();
 }

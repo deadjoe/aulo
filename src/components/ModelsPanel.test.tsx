@@ -158,4 +158,19 @@ describe("native model preparation", () => {
     );
     expect(screen.queryByText("Ready")).not.toBeInTheDocument();
   });
+  it("offers no download or folder on a computer that cannot make songs", async () => {
+    vi.mocked(models.getModelPlan).mockRejectedValue(
+      "Aulo couldn’t find an NVIDIA graphics card.",
+    );
+    render(<ModelsPanel />);
+    expect(
+      await screen.findByText("Aulo couldn’t find an NVIDIA graphics card."),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: /Download music models/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Already have the music models/ }),
+    ).not.toBeInTheDocument();
+  });
 });

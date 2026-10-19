@@ -34,7 +34,10 @@ YUE2_VERSION = "0.1.6"
 OVERRIDES = {
     "darwin": ["torch==2.14.1", "huggingface-hub==0.36.2", "soundfile==0.14.0",
                "safetensors==0.8.0"],
-    "other": ["huggingface-hub==0.36.2", "soundfile==0.14.0", "safetensors==0.8.0"],
+    # Windows runs only the GGUF engine (yue2.cpp brings its own CUDA), so PyPI's
+    # CPU-only Torch is all it needs: about 2.5 GB less than a CUDA build.
+    "other": ["torch==2.10.0", "huggingface-hub==0.36.2", "soundfile==0.14.0",
+              "safetensors==0.8.0"],
 }
 # Small, pure-Python: the GGUF engine converts checkpoints with it.
 EXTRAS = ["gguf>=0.10"]
@@ -97,11 +100,6 @@ def install(prefix: Path, work: Path) -> None:
     common = ["--python", python, "--break-system-packages", "--compile-bytecode"]
     run("uv", "pip", "install", *common, f"yue2-infer @ {YUE2}", *EXTRAS,
         "--overrides", str(overrides), env=env)
-    if sys.platform != "darwin":
-        # PyPI's Windows Torch is CPU-only; use the CUDA build GROOVE validates.
-        run("uv", "pip", "install", *common, "torch==2.10.0", "--index-url",
-            "https://download.pytorch.org/whl/cu128", "--reinstall-package", "torch",
-            "--no-deps", env=env)
     # GROOVE without its web UI: only the adapter and engines are imported.
     run("uv", "pip", "install", *common, "--no-deps", f"yue2-groove @ {GROOVE}", env=env)
 
@@ -206,7 +204,7 @@ def describe(prefix: Path) -> dict:
     probe = (
         "import importlib.metadata as m, json, torch;"
         "print(json.dumps({'groove': m.version('yue2-groove'), 'yue2': m.version('yue2-infer'),"
-        "'torch': torch.__version__}))"
+        "'torch': torch.__version__, 'cuda': torch.version.cuda}))"
     )
     quiet = os.environ | {"PYTHONDONTWRITEBYTECODE": "1"}
     result = subprocess.run([python, "-I", "-c", probe], capture_output=True, text=True,
@@ -217,6 +215,9 @@ def describe(prefix: Path) -> dict:
     versions = json.loads(out.strip().splitlines()[-1])
     if versions["groove"] != GROOVE_VERSION or versions["yue2"] != YUE2_VERSION:
         raise SystemExit(f"unexpected engine versions: {versions}")
+    if sys.platform == "win32" and versions["cuda"] is not None:
+        raise SystemExit("the Windows engine must use CPU-only Torch; GGUF brings its own CUDA")
+    versions.pop("cuda")
     # The adapter must import without the web UI being installed.
     subprocess.run([python, "-I", "-c", "from yue2_groove import adapter, gguf_engine;"
                     "adapter._require()"], check=True, env=quiet)

@@ -268,6 +268,14 @@ pub fn inspect(resources: &Path) -> EngineStatus {
 
 #[tauri::command]
 pub async fn engine_status(app: tauri::AppHandle) -> Result<EngineStatus, String> {
+    // Without a plan the engine would be started with no engine chosen; say why instead.
+    // Nothing is cached, so the answer follows the plan once the computer qualifies.
+    let plan = tauri::async_runtime::spawn_blocking(crate::plan::current)
+        .await
+        .map_err(|e| e.to_string())?;
+    if let Err(reason) = plan {
+        return Ok(EngineStatus::unavailable("unsupported", reason));
+    }
     if let Some(status) = app.state::<EngineCache>().reusable(Instant::now()) {
         return Ok(status);
     }

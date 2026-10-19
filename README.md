@@ -16,7 +16,7 @@ Implemented:
 - Suno-style progress: a spinner on the song's cover and "Creating…", with no technical stage names.
 - Workspaces (with Save to when creating, archiving and renaming) and playlists; multi-select with batch Add to playlist, Add to queue, Move to workspace and Move to Trash, with shortcuts; search, filters, sorting, and List, Waveform and Grid layouts.
 - A library grouped by day with covers drawn from each song's style (also written, with the title, into downloaded and shared MP3, M4A and FLAC files) and likes; song details with lyrics; a song menu with Create another version, Reuse settings, Rename, Download, Show in Finder, Add to queue, and Move to Trash; and a bottom player.
-- Engine selection is delegated to GROOVE's own rules (PyTorch on Apple Silicon and large NVIDIA cards, the GGUF engine on smaller NVIDIA cards).
+- The engine is chosen from the hardware: PyTorch on Macs with 16 GB or more, the GGUF engine on smaller Macs and on Windows. Each computer downloads only its engine's set of models, and never keeps two.
 - Settings (⌘,): notifications when a song is ready, whether Aulo stays ready between songs or frees its memory, storage use with Empty Trash and an optional 30-day automatic empty, the music models (check, download, remove), a placeholder for connecting the user's existing AI assistant, and a problem report that leaves out everything the person wrote.
 
 Not implemented: the Windows engine package, cover/edit integration, agent connection, signed installers, or automatic updates. Windows behavior compiles and is unit-tested but needs physical-device validation. See the [engine integration boundary](docs/ENGINE.md).
