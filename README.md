@@ -53,6 +53,17 @@ npm run tauri build -- --debug --bundles app
 
 Production distribution requires signing, notarization where applicable, and platform testing. No public release workflow is configured.
 
+### Versions
+
+Aulo's number follows `major.minor.patch` and changes only for a release: patch for fixes, minor for new features, 1.0 for the first public release. Every build also records the commit it came from, so the app menu's About panel, Settings › Help & About and problem reports all show the same text, such as `0.8.0 (7db2b63)`. Only a build of the commit tagged with its own version (`v0.8.0`) shows the plain number; every other build says `0.8.0-dev`, with `modified` when it had uncommitted changes. The Windows installer's own version field is the plain number, because Windows accepts digits only there.
+
+```sh
+python3 scripts/version.py set 0.9.0   # change the number everywhere, then merge it in a pull request
+python3 scripts/version.py tag         # on the merged main: tag v0.9.0 and push it
+```
+
+Pushing the tag builds the macOS DMG and the Windows installer in GitHub Actions; each run keeps them under Artifacts.
+
 ## Model preparation
 
 Aulo downloads exactly one model set, the one its engine plan needs: the PyTorch plan pins 17 official safetensors files (7.79 GB, `manifests/music-models.json`), the GGUF plan pins the ready-made Q8_0 and VAE GGUF files with their tokenizer and config (4.34 GB, `manifests/music-models-gguf.json`). Every file is pinned and SHA-256 verified. Model weights use CC BY-NC 4.0; the wizard links to the model license before download. Models are stored in Aulo's local data folder, outside the app bundle (on Windows, a location with non-English letters moves them to `C:\ProgramData\Aulo`). A person can instead choose a folder that already holds the same set laid out as the manifest; once it checks out, Aulo deletes its own copy after asking, so a computer never keeps two sets. The GGUF engine may write small checksum notes and a work folder beside the GGUF files of a chosen folder.

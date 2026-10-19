@@ -1,6 +1,6 @@
 [package]
 name = "aulo"
-version = "0.1.0"
+version = "0.8.0"
 description = "Local music creation, powered by YUE2 // GROOVE"
 authors = ["Aulo contributors"]
 edition = "2021"

@@ -153,10 +153,8 @@ export const shareSong = (
   cover: number[] | null = null,
 ) => invoke<void>("share_song", { id, title, anchor, cover });
 export const revealSong = (id: string) => invoke<void>("reveal_song", { id });
-export const appVersion = async () => {
-  const { getVersion } = await import("@tauri-apps/api/app");
-  return getVersion();
-};
+/** Aulo's version with the build it came from, such as "0.8.0 (7db2b63)". */
+export const appVersion = () => invoke<string>("app_version");
 export function onSongUpdated(handler: (song: Song) => void) {
   if (!isTauri()) return () => {};
   const stop = listen<Song>("song-updated", (event) => handler(event.payload));
