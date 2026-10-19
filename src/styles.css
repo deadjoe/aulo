@@ -3054,3 +3054,12 @@ input[type="range"]:disabled {
 .lyrics-fullscreen textarea::placeholder {
   color: #858a7f;
 }
+.lyrics-card .length-note {
+  align-items: flex-start;
+  padding: 0 2px;
+  line-height: 1.4;
+}
+.lyrics-card .length-note svg {
+  flex: none;
+  margin-top: 2px;
+}

@@ -16,7 +16,6 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tauri::Manager;
 
 const RESERVE: u64 = 512 * 1024 * 1024;
 
@@ -248,10 +247,42 @@ fn io_error(e: std::io::Error) -> String {
     format!("Aulo couldn’t save the music models here ({e}).")
 }
 fn managed_root(base: &Path, m: &Manifest) -> PathBuf {
-    base.join("models").join(&m.id)
+    models_home(base).join(&m.id)
+}
+
+/// Where Aulo keeps the music models it downloads: `<data>/models`.
+///
+/// yue2.cpp opens files through Windows' legacy code page, so on Windows the models need
+/// a path in plain ASCII. A Windows account named in Chinese, Japanese, Korean or any
+/// other script puts Aulo's data folder outside it; the models then live under
+/// `C:\ProgramData\Aulo` instead, in a folder of that account's own.
+pub fn models_home(base: &Path) -> PathBuf {
+    models_home_for(
+        &base.join("models"),
+        cfg!(windows),
+        std::env::var_os("ProgramData").map(PathBuf::from),
+    )
+}
+
+fn models_home_for(own: &Path, windows: bool, program_data: Option<PathBuf>) -> PathBuf {
+    if !windows || own.to_string_lossy().is_ascii() {
+        return own.to_path_buf();
+    }
+    let shared = program_data
+        .filter(|p| p.to_string_lossy().is_ascii())
+        .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"));
+    // One folder per account, named after its own data folder so it never changes.
+    let digest = Sha256::digest(own.to_string_lossy().as_bytes());
+    let account: String = digest[..8].iter().map(|b| format!("{b:02x}")).collect();
+    shared.join("Aulo").join(account).join("models")
+}
+
+/// yue2.cpp cannot open a folder like this on Windows (see `models_home`).
+fn unreadable_on_windows(folder: &Path) -> bool {
+    cfg!(windows) && !folder.to_string_lossy().is_ascii()
 }
 fn base_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    app.path().app_data_dir().map_err(|e| e.to_string())
+    crate::data_dir(app)
 }
 fn ensure_not_symlink(path: &Path) -> Result<(), String> {
     for ancestor in path.ancestors() {
@@ -340,6 +371,106 @@ pub fn verified_root(app: &tauri::AppHandle, manager: &ModelManager) -> Option<P
     (status.models_verified && status.phase == "verified")
         .then(|| status.model_root.as_ref().map(PathBuf::from))
         .flatten()
+}
+/// What the problem report says about the music models, as label and value lines.
+/// Works on any computer, with or without an engine plan.
+pub fn report_lines(app: &tauri::AppHandle, manager: &ModelManager) -> Vec<(String, String)> {
+    let Ok(base) = base_path(app) else {
+        return vec![("State".into(), "Aulo’s data folder can’t be found".into())];
+    };
+    let saved = fs::read(base.join("models.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<SavedModels>(&bytes).ok());
+    let m = manifest().ok();
+    if m.is_some() {
+        // Fills in the state on first use, as Settings would.
+        let _ = verified_root(app, manager);
+    }
+    let status = manager.0.status.lock().unwrap().clone();
+    let mut lines = Vec::new();
+    lines.push((
+        "Set for this computer".into(),
+        match &m {
+            Some(m) => format!(
+                "{} ({}), {} files, {:.2} GB",
+                m.label,
+                m.id,
+                m.files.len(),
+                m.total() as f64 / 1e9
+            ),
+            None => "none: this computer has no engine plan".into(),
+        },
+    ));
+    lines.push((
+        "State".into(),
+        match &status {
+            Some(s) => format!("{} ({})", s.phase, s.message),
+            None => "not looked at yet".into(),
+        },
+    ));
+    lines.push((
+        "Recorded set".into(),
+        match &saved {
+            Some(saved) => {
+                let own = saved.model_root.starts_with(models_home(&base));
+                format!(
+                    "{}, {} files checked, in {} ({})",
+                    saved.manifest_id,
+                    saved.verified_files.len(),
+                    if own {
+                        "Aulo’s own folder"
+                    } else {
+                        "a folder the person chose"
+                    },
+                    saved.model_root.display()
+                )
+            }
+            None => "none".into(),
+        },
+    ));
+    let home = models_home(&base);
+    let mut kept: Vec<String> = fs::read_dir(&home)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|e| {
+                    let bytes = crate::support::folder_bytes(&e.path());
+                    format!(
+                        "{} ({:.2} GB)",
+                        e.file_name().to_string_lossy(),
+                        bytes as f64 / 1e9
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    kept.sort();
+    lines.push((
+        "Aulo’s models folder".into(),
+        format!(
+            "{}: {}",
+            home.display(),
+            if kept.is_empty() {
+                "empty".into()
+            } else {
+                kept.join(", ")
+            }
+        ),
+    ));
+    lines
+}
+
+/// A song found the music models damaged: they must be checked again before the next
+/// song, which Settings › Music models offers.
+pub fn needs_checking(manager: &ModelManager) {
+    manager.update(|s| {
+        if s.models_verified {
+            s.models_verified = false;
+            s.phase = "unverified".into();
+            s.operation = Some("verify".into());
+            s.message = "Aulo needs to check the music models again before using them.".into();
+        }
+    });
 }
 #[tauri::command]
 pub fn model_status(
@@ -467,7 +598,7 @@ pub fn download_models(
 /// it. Returns that folder, if there was one.
 pub fn remove_model_files(base: &Path) -> Result<Option<PathBuf>, String> {
     let _lock = lock_storage(base)?;
-    let models = base.join("models");
+    let models = models_home(base);
     let chosen = fs::read(base.join("models.json"))
         .ok()
         .and_then(|bytes| serde_json::from_slice::<SavedModels>(&bytes).ok())
@@ -497,7 +628,7 @@ pub fn remove_model_files(base: &Path) -> Result<Option<PathBuf>, String> {
 /// it and anything inside it. A link is removed, never followed. One set of weights
 /// per computer.
 fn remove_managed_except(base: &Path, keep: &Path) -> Result<(), String> {
-    let Ok(entries) = fs::read_dir(base.join("models")) else {
+    let Ok(entries) = fs::read_dir(models_home(base)) else {
         return Ok(());
     };
     // Compare real locations too: the same folder can be named through a link.
@@ -527,7 +658,7 @@ fn remove_managed_except(base: &Path, keep: &Path) -> Result<(), String> {
 /// over, then every earlier folder is deleted. Only what changed is downloaded again,
 /// and there is never a second set of weights. Moved files are checked like any other.
 fn adopt_previous(base: &Path, root: &Path, m: &Manifest) -> Result<(), String> {
-    if let Ok(entries) = fs::read_dir(base.join("models")) {
+    if let Ok(entries) = fs::read_dir(models_home(base)) {
         for entry in entries.flatten() {
             let old = entry.path();
             let is_dir = fs::symlink_metadata(&old).is_ok_and(|meta| meta.is_dir());
@@ -611,6 +742,9 @@ pub fn verify_models(
     if !root.is_dir() {
         return Err("Choose the folder that contains the music models.".into());
     }
+    if unreadable_on_windows(&root) {
+        return Err("Aulo can’t use music models from a folder whose location has letters other than English ones. Move the folder to one like C:\\Aulo Models, then choose it again.".into());
+    }
     let m = manifest()?;
     let base = base_path(&app)?;
     manager.begin(&root, m.total())?;
@@ -624,10 +758,7 @@ pub fn verify_models(
             // From now on these are the models; Aulo's own copy would be a second set.
             remove_managed_except(&base, &root)?;
             save_verified(&base, &root, &m)?;
-            manager.phase(
-                "verified",
-                "Your music models are ready. Nothing in the folder was changed.",
-            );
+            manager.phase("verified", "Your music models are ready.");
             manager.update(|s| {
                 s.models_verified = true;
                 s.current_file = None;

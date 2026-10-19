@@ -12,14 +12,9 @@ import {
   Share,
 } from "lucide-react";
 import { SongCover } from "./SongList";
+import SongStatus from "./SongStatus";
 import SongMenu, { type SongActions } from "./SongMenu";
-import {
-  displayTitle,
-  formatTime,
-  isActive,
-  statusLabel,
-  type Song,
-} from "../lib/songs";
+import { displayTitle, formatTime, isActive, type Song } from "../lib/songs";
 
 function ShareButton({ song, actions }: { song: Song; actions: SongActions }) {
   const [busy, setBusy] = useState(false);
@@ -134,7 +129,7 @@ export default function SongDetail({
           </p>
           {!finished && (
             <p className={`song-status state-${song.state}`}>
-              {statusLabel(song)}
+              <SongStatus song={song} />
             </p>
           )}
           <div className="detail-actions">

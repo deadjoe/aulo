@@ -29,6 +29,9 @@ fn work(id: &str, state: SongState) -> Work {
         workspace: DEFAULT_WORKSPACE.into(),
         trashed_ms: None,
         seed: None,
+        finished_ms: None,
+        failure: None,
+        expected_ms: None,
     }
 }
 
@@ -468,31 +471,74 @@ fn live_exports_every_format() {
 #[test]
 fn finishing_settles_only_songs_the_engine_left_active() {
     let mut done = work(ID, SongState::Completed);
-    finish(&mut done, &Err("boom".into()), false);
+    finish(&mut done, &Err("engine_stopped"), false);
     assert_eq!(done.state, SongState::Completed);
 
     let mut stopped = work(ID, SongState::Running);
     stopped.stage = Some("performing".into());
-    finish(&mut stopped, &Err("closed".into()), true);
+    finish(&mut stopped, &Err("engine_stopped"), true);
     assert_eq!(stopped.state, SongState::Cancelled);
     assert!(stopped.stage.is_none() && stopped.message.is_none());
+    assert!(stopped.finished_ms.is_some());
 
     let mut crashed = work(ID, SongState::Running);
-    finish(
-        &mut crashed,
-        &Err("The music engine stopped unexpectedly.".into()),
-        false,
-    );
+    crashed.stage = Some("performing".into());
+    finish(&mut crashed, &Err("engine_stopped"), false);
     assert_eq!(crashed.state, SongState::Failed);
+    assert_eq!(crashed.failure.as_deref(), Some("engine_stopped"));
     assert_eq!(
         crashed.message.as_deref(),
-        Some("The music engine stopped unexpectedly.")
+        Some("The music engine stopped unexpectedly. Try creating this song again.")
     );
+    // Where it stopped stays on record for the problem report.
+    assert_eq!(crashed.stage.as_deref(), Some("performing"));
 
     let mut silent = work(ID, SongState::Running);
     finish(&mut silent, &Ok(()), false);
     assert_eq!(silent.state, SongState::Failed);
-    assert!(silent.message.is_some());
+    assert_eq!(silent.failure.as_deref(), Some("unknown"));
+    assert!(silent
+        .message
+        .as_deref()
+        .unwrap()
+        .contains("problem report"));
+}
+
+#[test]
+fn each_engine_failure_says_what_to_do_and_unknown_reasons_stay_unknown() {
+    let event = |reason: &str| {
+        parse_event(
+            format!(
+                r#"{{"protocolVersion":{},"event":"failed","workId":"{ID}","reason":"{reason}"}}"#,
+                crate::engine::PROTOCOL_VERSION
+            )
+            .as_bytes(),
+        )
+        .unwrap()
+    };
+    let folder = Path::new("/nowhere");
+    let mut messages = std::collections::HashSet::new();
+    for reason in ENGINE_FAILURES {
+        let mut w = work(ID, SongState::Running);
+        assert!(apply_event(&mut w, &event(reason), folder));
+        assert_eq!(w.state, SongState::Failed);
+        assert_eq!(w.failure.as_deref(), Some(reason));
+        messages.insert(w.message.unwrap());
+    }
+    // Damaged and unopenable installs share one message; every other reason has its own.
+    assert_eq!(messages.len(), ENGINE_FAILURES.len() - 1);
+    let mut w = work(ID, SongState::Running);
+    apply_event(&mut w, &event("rm -rf"), folder);
+    assert_eq!(w.failure.as_deref(), Some("unknown"));
+}
+
+#[test]
+fn older_records_without_timing_or_reason_still_load() {
+    let mut value = serde_json::to_value(work(ID, SongState::Failed)).unwrap();
+    assert!(value.get("failure").is_none() && value.get("finishedMs").is_none());
+    value["failure"] = "out_of_memory".into();
+    let w: Work = serde_json::from_value(value).unwrap();
+    assert_eq!(w.failure.as_deref(), Some("out_of_memory"));
 }
 
 #[test]
@@ -548,4 +594,34 @@ fn a_completed_name_never_replaces_a_file_the_save_window_did_not_ask_about() {
         checked_destination(dir.path().join("foo.wav"), "wav").unwrap(),
         dir.path().join("foo.wav")
     );
+}
+
+#[test]
+fn the_usual_time_comes_from_the_last_songs_this_computer_finished() {
+    let done = |finished: u64, run: u64| Work {
+        started_ms: Some(finished - run),
+        finished_ms: Some(finished),
+        ..work(ID, SongState::Completed)
+    };
+    assert_eq!(typical_run_ms(&[]), None);
+    // Failed songs and songs without timing (older records) do not count.
+    let failed = Work {
+        started_ms: Some(1),
+        finished_ms: Some(999_999),
+        ..work(ID, SongState::Failed)
+    };
+    assert_eq!(
+        typical_run_ms(&[failed.clone(), work(ID, SongState::Completed)]),
+        None
+    );
+    let works = [
+        done(1_000_000, 900_000), // oldest: left out
+        done(2_000_000, 200_000),
+        done(3_000_000, 180_000),
+        done(4_000_000, 600_000), // first song after a start: slower
+        done(5_000_000, 190_000),
+        done(6_000_000, 210_000),
+        failed,
+    ];
+    assert_eq!(typical_run_ms(&works), Some(200_000));
 }

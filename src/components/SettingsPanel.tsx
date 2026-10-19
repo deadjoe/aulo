@@ -517,7 +517,7 @@ function AboutSection({ notify }: { notify: (text: string) => void }) {
       <Row title="Aulo" detail={version ? `Version ${version}` : undefined} />
       <Row
         title="Problem report"
-        detail="If something isn’t working, save a report and send it to whoever helps you. It describes Aulo and this computer. It has no songs, lyrics, styles or titles, and Aulo never sends it anywhere."
+        detail="If something isn’t working, save a report and send it to whoever helps you. It describes Aulo, this computer and how your recent songs went. It has none of your songs, lyrics, styles, titles or your name, and Aulo never sends it anywhere."
       >
         <button
           className="secondary small"

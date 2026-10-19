@@ -235,7 +235,9 @@ describe("Settings › Help & About", () => {
     const props = open("about");
     expect(await screen.findByText("Version 0.2.0")).toBeVisible();
     expect(
-      screen.getByText(/no songs, lyrics, styles or titles/),
+      screen.getByText(
+        /none of your songs, lyrics, styles, titles or your name/,
+      ),
     ).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Save report…" }));
     expect(settingsApi.saveReport).toHaveBeenCalledOnce();

@@ -26,7 +26,6 @@ const CANCEL_GRACE: Duration = Duration::from_secs(30);
 const ENGINE_START: Duration = Duration::from_secs(180);
 /// Every stage reports at least every 100 tokens or render step; silence this long is a hang.
 const ENGINE_WATCHDOG: Duration = Duration::from_secs(600);
-/// After this long without songs, the engine exits and returns its memory.
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -112,6 +111,71 @@ pub struct Work {
     /// The engine seed this take used, recorded so a take can be reproduced.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seed: Option<u32>,
+    /// When the engine run ended, however it ended.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finished_ms: Option<u64>,
+    /// Why the song could not be finished (see `failure_message`), for the problem report.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<String>,
+    /// How long a song usually takes on this computer, known once one has been made.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_ms: Option<u64>,
+}
+
+/// How long making a song took, for one that finished.
+pub fn run_ms(work: &Work) -> Option<u64> {
+    if work.state != SongState::Completed {
+        return None;
+    }
+    let (start, end) = (work.started_ms?, work.finished_ms?);
+    (end > start).then(|| end - start)
+}
+
+/// How long songs take on this computer: the middle of the last five that finished.
+pub fn typical_run_ms(works: &[Work]) -> Option<u64> {
+    let mut recent: Vec<(u64, u64)> = works
+        .iter()
+        .filter_map(|w| Some((w.finished_ms?, run_ms(w)?)))
+        .collect();
+    recent.sort_unstable_by_key(|(finished, _)| std::cmp::Reverse(*finished));
+    let mut runs: Vec<u64> = recent.into_iter().take(5).map(|(_, run)| run).collect();
+    runs.sort_unstable();
+    runs.get(runs.len() / 2).copied()
+}
+
+/// What to tell people when a song fails, by reason: the music engine's own reasons
+/// (`runtime/bridge.py`, `FAILURE_PATTERNS`) and the song service's.
+pub fn failure_message(reason: &str) -> &'static str {
+    match reason {
+        "lyrics_too_long" => "These lyrics are too long for one song on this computer. Shorten them, then try again.",
+        "out_of_memory" => "This computer ran out of memory for this song. Close other apps, then try again.",
+        "graphics_driver" => "Your graphics card’s driver needs an update. Update the NVIDIA driver, then try again.",
+        "models_damaged" => "The music models need to be checked. Open Settings › Music models, then try again.",
+        "models_unverified" => "Your music models need to be checked again before creating.",
+        "engine_damaged" | "folder_name" => "Part of Aulo is missing or can’t be opened. Install Aulo again, then try again.",
+        "engine_start" => "The music engine could not start. Close and reopen Aulo to try again.",
+        "engine_stopped" => "The music engine stopped unexpectedly. Try creating this song again.",
+        "engine_hang" => "The music engine stopped responding. Try creating this song again.",
+        _ => "This song could not be finished. Try creating it again. If it keeps happening, save a problem report in Settings › Help.",
+    }
+}
+
+/// Reasons the engine may send; anything else is reported as "unknown".
+const ENGINE_FAILURES: [&str; 7] = [
+    "lyrics_too_long",
+    "out_of_memory",
+    "graphics_driver",
+    "models_damaged",
+    "engine_damaged",
+    "folder_name",
+    "unknown",
+];
+
+fn fail(work: &mut Work, reason: &str) {
+    work.state = SongState::Failed;
+    work.failure = Some(reason.into());
+    work.message = Some(failure_message(reason).into());
+    work.finished_ms = Some(now_ms());
 }
 
 fn default_workspace() -> String {
@@ -241,6 +305,9 @@ pub struct EngineEvent {
     pub work: Option<EngineResult>,
     #[serde(default)]
     pub work_id: Option<String>,
+    /// Why a song failed (`failed` only).
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize, PartialEq)]
@@ -299,19 +366,26 @@ pub fn apply_event(work: &mut Work, event: &EngineEvent, folder: &Path) -> bool 
             work.stage = None;
             work.progress = None;
             work.message = None;
+            work.failure = None;
+            work.finished_ms = Some(now_ms());
             true
         }
         "cancelled" => {
             work.state = SongState::Cancelled;
             work.stage = None;
             work.progress = None;
+            work.finished_ms = Some(now_ms());
             true
         }
         "failed" => {
-            work.state = SongState::Failed;
-            work.stage = None;
+            let reason = event
+                .reason
+                .as_deref()
+                .filter(|r| ENGINE_FAILURES.contains(r))
+                .unwrap_or("unknown");
+            // Keep the stage it failed in for the problem report.
+            fail(work, reason);
             work.progress = None;
-            work.message = Some("This song could not be finished. Try creating it again.".into());
             true
         }
         _ => false,
@@ -320,21 +394,20 @@ pub fn apply_event(work: &mut Work, event: &EngineEvent, folder: &Path) -> bool 
 
 /// Settle a song once its engine run is over. A song the engine already finished is
 /// left alone; one still marked active ended without a result.
-pub fn finish(work: &mut Work, result: &Result<(), String>, cancelled: bool) {
+///
+/// `result` carries the song service's own reason when the run broke off.
+pub fn finish(work: &mut Work, result: &Result<(), &'static str>, cancelled: bool) {
     if !work.active() {
         return;
     }
     if cancelled {
         work.state = SongState::Cancelled;
         work.message = None;
+        work.finished_ms = Some(now_ms());
+        work.stage = None;
     } else {
-        work.state = SongState::Failed;
-        work.message = Some(match result {
-            Ok(()) => "This song could not be finished. Try creating it again.".into(),
-            Err(message) => message.clone(),
-        });
+        fail(work, result.err().unwrap_or("unknown"));
     }
-    work.stage = None;
     work.progress = None;
 }
 
@@ -362,11 +435,7 @@ struct State {
 pub struct SongService(Arc<(Mutex<State>, Condvar)>);
 
 fn library_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    Ok(app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?
-        .join("library"))
+    Ok(crate::data_dir(app)?.join("library"))
 }
 
 /// The engine's stderr, kept across songs and trimmed when it grows large.
@@ -597,24 +666,25 @@ impl SongService {
         app: &tauri::AppHandle,
         id: &str,
         engine: &mut Option<EngineProcess>,
-    ) -> Result<(), String> {
-        let base = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    ) -> Result<(), &'static str> {
+        let base = crate::data_dir(app).map_err(|_| "unknown")?;
         let root = base.join("library");
         let model_root = models::verified_root(app, &app.state::<models::ModelManager>())
-            .ok_or("Your music models need to be checked again before creating.")?;
-        let (request, seed) = {
+            .ok_or("models_unverified")?;
+        let (request, seed, expected) = {
             let state = self.0 .0.lock().unwrap();
-            let work = state
-                .works
-                .iter()
-                .find(|w| w.id == id)
-                .ok_or("Missing work")?;
+            let work = state.works.iter().find(|w| w.id == id).ok_or("unknown")?;
             if work.state != SongState::Queued {
                 return Ok(());
             }
-            (work.request.clone(), work.seed.unwrap_or_else(new_seed))
+            (
+                work.request.clone(),
+                work.seed.unwrap_or_else(new_seed),
+                typical_run_ms(&state.works),
+            )
         };
         self.update(app, id, true, |work| {
+            work.expected_ms = expected;
             work.seed = Some(seed);
             work.state = SongState::Running;
             work.stage = Some("preparing".into());
@@ -625,17 +695,16 @@ impl SongService {
             if let Some(old) = engine.take() {
                 old.kill();
             }
-            let resources = engine::resources(app)?;
+            let resources = engine::resources(app).map_err(|_| "engine_damaged")?;
             *engine = Some(
                 self.start_engine(&base, &resources, &model_root)
-                    .map_err(|_| {
-                        "The music engine could not start. Close and reopen Aulo to try again."
-                            .to_string()
-                    })?,
+                    .map_err(|_| "engine_start")?,
             );
         }
         let process = engine.as_ref().expect("engine started");
-        process.send(&generate_command(id, &request, seed, &model_root, &root))?;
+        process
+            .send(&generate_command(id, &request, seed, &model_root, &root))
+            .map_err(|_| "engine_stopped")?;
         let cancel_now = {
             let mut state = self.0 .0.lock().unwrap();
             state.current = Some(id.to_string());
@@ -653,6 +722,9 @@ impl SongService {
                     self.update(app, id, event.event != "progress", |work| {
                         apply_event(work, &event, &folder);
                     });
+                    if event.reason.as_deref() == Some("models_damaged") {
+                        models::needs_checking(&app.state::<models::ModelManager>());
+                    }
                     if terminal {
                         return Ok(());
                     }
@@ -663,19 +735,14 @@ impl SongService {
                         old.kill();
                     }
                     self.forget_engine();
-                    return Err(
-                        "The music engine stopped unexpectedly. Try creating this song again."
-                            .into(),
-                    );
+                    return Err("engine_stopped");
                 }
                 Err(_) => {
                     if let Some(old) = engine.take() {
                         old.kill();
                     }
                     self.forget_engine();
-                    return Err(
-                        "The music engine stopped responding. Try creating this song again.".into(),
-                    );
+                    return Err("engine_hang");
                 }
             }
         }
@@ -740,10 +807,13 @@ pub fn generate_command(
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreationStatus {
-    ready: bool,
+    pub ready: bool,
     /// models | engine | unsupported | ready
-    blocker: &'static str,
-    message: String,
+    pub blocker: &'static str,
+    pub message: String,
+    /// About how long a song can be on this computer, when it can make songs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_song_seconds: Option<u32>,
 }
 
 #[tauri::command]
@@ -756,6 +826,7 @@ pub async fn creation_status(app: tauri::AppHandle) -> Result<CreationStatus, St
             ready: false,
             blocker: "unsupported",
             message: message.into(),
+            max_song_seconds: None,
         });
     }
     let model_root = models::verified_root(&app, &app.state::<models::ModelManager>());
@@ -765,6 +836,7 @@ pub async fn creation_status(app: tauri::AppHandle) -> Result<CreationStatus, St
             ready: false,
             blocker: "models",
             message: "Finish preparing the music models to start creating.".into(),
+            max_song_seconds: None,
         }
     } else if !engine.generation_ready {
         CreationStatus {
@@ -775,12 +847,14 @@ pub async fn creation_status(app: tauri::AppHandle) -> Result<CreationStatus, St
                 "engine"
             },
             message: engine.message.into(),
+            max_song_seconds: None,
         }
     } else {
         CreationStatus {
             ready: true,
             blocker: "ready",
             message: "Ready to create.".into(),
+            max_song_seconds: crate::plan::current().ok().map(|p| p.max_song_seconds()),
         }
     })
 }
@@ -930,6 +1004,9 @@ pub async fn create_song(
         workspace,
         trashed_ms: None,
         seed: None,
+        finished_ms: None,
+        failure: None,
+        expected_ms: None,
     };
     write_record(&root, &work)?;
     service.with_state(&app, |state| {

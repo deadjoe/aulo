@@ -3,6 +3,7 @@ import {
   Bookmark,
   ChevronDown,
   Eraser,
+  Info,
   Music2,
   LoaderCircle,
   Trash2,
@@ -13,7 +14,13 @@ import { FullScreenLyrics, LyricsToolbar } from "./LyricsTools";
 import SavedPopover from "./SavedPopover";
 import { saveText } from "../lib/saved";
 import { useUndo } from "../lib/useUndo";
-import { addSection, addStyle, SECTIONS, styleIdeas } from "../lib/composer";
+import {
+  addSection,
+  addStyle,
+  lengthNote,
+  SECTIONS,
+  styleIdeas,
+} from "../lib/composer";
 import type { CreationStatus, SongRequest, Vocal } from "../lib/songs";
 
 type Mode = "simple" | "advanced";
@@ -142,6 +149,9 @@ export default function Composer({
   const ready = status?.ready === true;
   const canCreate = ready && !missing && !creating;
   const ideas = styleIdeas(0, request.style);
+  const lengthWarning = request.instrumental
+    ? null
+    : lengthNote(request.lyrics, status?.maxSongSeconds);
 
   const lyricsCard = (
     <section className="field-card lyrics-card">
@@ -166,6 +176,11 @@ export default function Composer({
         onChange={(e) => lyricsHistory.type(e.target.value)}
         onKeyDown={lyricsHistory.onKeyDown}
       />
+      {lengthWarning && (
+        <p className="helper length-note" role="status">
+          <Info size={14} /> {lengthWarning}
+        </p>
+      )}
       {mode === "advanced" && !request.instrumental && (
         <span className="section-buttons" aria-label="Add a section">
           {SECTIONS.map((section) => (

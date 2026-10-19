@@ -59,6 +59,43 @@ GENDER_WORDS = {
 }
 
 
+# Why a song failed, as one of a few reasons the app can explain and act on. Matched on
+# the error text GROOVE, PyTorch and yue2.cpp produce; anything else is "unknown".
+FAILURE_PATTERNS = (
+    ("lyrics_too_long", re.compile(r"leaves no room for a song", re.I)),
+    ("out_of_memory", re.compile(
+        r"out of memory|OutOfMemoryError|failed to allocate|alloc_buffer|cudaMalloc failed"
+        r"|not enough memory|std::bad_alloc", re.I)),
+    ("graphics_driver", re.compile(
+        r"driver version is insufficient|cudaErrorInsufficientDriver|no CUDA-capable device"
+        r"|ggml_cuda_init: failed|cudaErrorNoDevice|unsupported PTX version", re.I)),
+    ("folder_name", re.compile(r"non-ASCII characters", re.I)),
+    ("engine_damaged", re.compile(r"no prebuilt yue2\.cpp|yue2\.cpp binaries", re.I)),
+    ("models_damaged", re.compile(
+        r"model folder is incomplete|no safetensors weights|SafetensorError|HeaderTooLarge"
+        r"|gguf_init_from_file|failed to load model", re.I)),
+)
+
+
+def failure_reason(error, model_root=None):
+    """One of FAILURE_PATTERNS' reasons for ``error`` and its causes, or "unknown"."""
+    chain = []
+    while error is not None and error not in chain:
+        chain.append(error)
+        error = error.__cause__ or error.__context__
+    text = "\n".join(f"{type(e).__name__}: {e}" for e in chain)
+    for reason, pattern in FAILURE_PATTERNS:
+        if pattern.search(text):
+            return reason
+    # A model file that went missing or unreadable since it was checked.
+    if model_root is not None:
+        root = str(model_root)
+        for e in chain:
+            if isinstance(e, OSError) and str(getattr(e, "filename", "") or "").startswith(root):
+                return "models_damaged"
+    return "unknown"
+
+
 def emit(stream, event, **fields):
     stream.write(json.dumps({"protocolVersion": PROTOCOL_VERSION, "event": event, **fields}) + "\n")
     stream.flush()
@@ -455,10 +492,11 @@ def serve(runtime, commands, report):
                 report("completed", workId=work_id, work=result)
             except InterruptedError:
                 report("cancelled", workId=work_id)
-            except Exception:
+            except Exception as error:
                 traceback.print_exc(file=sys.stderr)
                 report("failed", workId=work_id,
-                       message="The music engine could not complete this song.")
+                       message="The music engine could not complete this song.",
+                       reason=failure_reason(error, command.get("modelRoot")))
             finally:
                 commands.end()
     finally:

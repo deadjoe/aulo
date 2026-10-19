@@ -61,7 +61,11 @@ The GGUF engine's binaries are GROOVE's pinned yue2.cpp release (`e8b39f7`), fet
 
 A computer without a plan gets no manifest at all: setup shows why it cannot make songs and offers neither a download nor a folder to check, because either could be the wrong set. When a manifest changes (an update to new models), files the new manifest lists at the same place and size are moved over from the earlier folder under `<app-data>/models/` and checked again, only the rest is downloaded, and the earlier folder is deleted. Choosing a folder of one's own also deletes Aulo's downloaded copy once the chosen folder is verified. A folder the person chose is never changed.
 
-On Windows, the graphics card and its own memory come from `nvidia-smi`, which every NVIDIA driver installs (also looked for in its older install folder); if it cannot be run, DXGI, which is part of Windows, answers instead.
+On Windows, the graphics card, its own memory and the driver version come from `nvidia-smi`, which every NVIDIA driver installs (also looked for in its older install folder); if it cannot be run, DXGI, which is part of Windows, answers instead (without the driver version).
+
+**Song length.** GROOVE's song budget is 9 000 semantic tokens at 25 per second, about six minutes; with the small context it leaves about 4.9 minutes, and longer lyrics are cut off at the limit. `creation_status` reports the limit (`maxSongSeconds`), and Create notes under the lyrics when they may run past it. The note uses a rough estimate (about 4.5 s per sung line), not the tokenizer.
+
+**Windows paths.** yue2.cpp opens files through Windows' legacy code page, so a path with letters outside it cannot be opened; GROOVE then tries the folder's 8.3 short name and fails without one. Aulo's data lives in the local (not roaming) application data folder, and when that path is not plain ASCII (an account named in Chinese, Japanese, Korean or another script) the downloaded models go to `C:\ProgramData\Aulo\<account>\models` instead (`models::models_home`). A folder of the person's own whose path is not ASCII is refused with a plain message.
 
 ## Song service
 
@@ -73,6 +77,10 @@ On Windows, the graphics card and its own memory come from `nvidia-smi`, which e
 - The interpreter runs with `-I -B -X utf8`: isolated from the computer's Python settings (which also makes it ignore `PYTHON*` variables), never writing bytecode into the read-only engine, and using UTF-8 on every platform.
 - When Aulo quits, the engine is stopped. While a song is being made on macOS, `caffeinate -i` keeps the computer from idle sleep.
 - The engine's stderr is appended to `<app-data>/logs/engine.log`, rotated at 5 MB.
+
+**Failures.** The bridge sends a reason with every failed song (`failure_reason`, matched on the error text of GROOVE, PyTorch and yue2.cpp): `lyrics_too_long`, `out_of_memory`, `graphics_driver`, `models_damaged`, `engine_damaged`, `folder_name` or `unknown`. The song service adds its own (`engine_start`, `engine_stopped`, `engine_hang`, `models_unverified`). Each reason has its own message saying what to do (`songs::failure_message`), and the reason is kept with the song for the problem report. A `models_damaged` failure marks the models as needing a check, so the next song waits for Settings › Music models.
+
+**Time.** Each song records when its run started and ended. While a song is being made the interface shows a clock and, once this computer has made a song, about how long is left, from the middle of the last five finished songs (`songs::typical_run_ms`). Before the first song it says that the first one takes longer.
 
 Works are folders under `<app-data>/library/<id>/` with an atomically replaced `aulo.json` record. Only a `completed` event with an existing `audio.flac` and no pending marker makes a work playable. Works left queued or running by a previous session are marked interrupted at startup, unless their folder holds a playable `audio.flac` and no pending marker: then the song had finished but its record could not be saved, and it is restored as completed. A change a person makes (rename, like, move, Trash) is undone and reported if its record cannot be saved. Playback uses Tauri's asset protocol, scoped to `library/*/audio.flac`. Download offers M4A (macOS only, 256 kbps AAC through `afconvert`, which is part of macOS itself), MP3 (320 kbps, LAME built into Aulo), WAV (24-bit, written by Aulo) and FLAC (the original file). MP3 and WAV need neither the music engine nor anything installed on the computer (`src-tauri/src/audio.rs`). The file is written beside the chosen name and only replaces it once complete; Move to Trash uses the operating system's trash so songs can be restored.
 

@@ -31,6 +31,10 @@ export interface Song {
   workspace: string;
   /** Set while the song is in Aulo's Trash. */
   trashedMs: number | null;
+  /** When the engine run ended, however it ended. */
+  finishedMs?: number | null;
+  /** How long a song usually takes on this computer, once one has been made. */
+  expectedMs?: number | null;
 }
 export const DEFAULT_WORKSPACE = "default";
 export interface Workspace {
@@ -64,6 +68,8 @@ export interface CreationStatus {
   ready: boolean;
   blocker: "models" | "engine" | "unsupported" | "ready" | "preview";
   message: string;
+  /** About how long a song can be on this computer. */
+  maxSongSeconds?: number;
 }
 
 export const desktop = () => isTauri();
@@ -170,6 +176,25 @@ export function statusLabel(song: Song): string {
   if (song.state === "interrupted" || song.state === "failed")
     return song.message ?? "This song could not be finished.";
   return "";
+}
+
+/**
+ * Words for a song being made, with the time so far: a song takes minutes, and
+ * without a moving clock people take a long wait for a frozen app.
+ */
+export function creatingText(song: Song, now: number): string {
+  if (song.state !== "running" || song.startedMs == null)
+    return statusLabel(song);
+  const elapsed = Math.max(0, now - song.startedMs);
+  const clock = `Creating… ${formatTime(elapsed / 1000)}`;
+  const expected = song.expectedMs;
+  if (expected == null)
+    return `${clock} · The first song takes longer while Aulo gets ready`;
+  const left = expected - elapsed;
+  if (left > 90_000)
+    return `${clock} · About ${Math.round(left / 60_000)} min left`;
+  if (left > 0) return `${clock} · Almost done`;
+  return `${clock} · Taking a little longer than usual`;
 }
 
 export function formatTime(seconds: number | null | undefined): string {

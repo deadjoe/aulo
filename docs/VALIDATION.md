@@ -1,5 +1,12 @@
 # Validation record
 
+## Problem report, failures, creating time, Windows paths — 2026-10-19
+
+- Native tests: each engine failure reason has its own message and unknown reasons stay unknown; finishing keeps the stage a song stopped in; older records without timing or reason still load; the usual time per song is the middle of the last five finished songs; the small context allows about 4:50; nvidia-smi output gives the largest card and its driver; Windows models always get an ASCII path for accounts named in Chinese, Japanese, Korean and accented Latin, and other systems keep theirs; the problem report has its six sections, writes dates in UTC, describes songs without their words, and names neither the home folder nor the account.
+- Bridge tests: failures are told apart (too-long lyrics, CUDA and yue2.cpp out of memory, an old driver, a non-ASCII path, a damaged model folder, a model file gone missing) and the reason is sent with the failure.
+- Component tests: the clock and time left under a song being made, the first-song note, and the lyrics length note.
+- Not covered: the reasons against real failures on real hardware (the patterns follow the error texts in GROOVE, PyTorch and yue2.cpp); the ProgramData folder on a real Windows account with a non-ASCII name.
+
 ## One set of models, Windows engine — 2026-10-19
 
 - Native tests: a plan once found never changes during a run; a computer without one is looked at again after 30 seconds or at once on Check again. Moving to a new model set reuses files of the same place and size, leaves a changed file to be downloaded, and deletes the earlier folder; clearing old sets keeps the folder in use and removes a link without following it.

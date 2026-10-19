@@ -4,6 +4,7 @@ import {
   addSection,
   addStyle,
   EMPTY_REQUEST,
+  lengthNote,
   loadComposer,
   saveComposer,
   STYLE_IDEAS,
@@ -42,5 +43,21 @@ describe("composer helpers", () => {
     expect(loadComposer()).toEqual(EMPTY_REQUEST);
     localStorage.setItem("aulo.composer.v1", "{broken");
     expect(loadComposer()).toEqual(EMPTY_REQUEST);
+  });
+});
+
+describe("lyrics longer than one song", () => {
+  const lines = (n: number) =>
+    ["[Verse]", ...Array.from({ length: n }, (_, i) => `line ${i}`)].join("\n");
+  it("warns only when the lyrics may run past this computer's limit", () => {
+    expect(lengthNote(lines(30), 290)).toBeNull();
+    expect(lengthNote(lines(70), 290)).toBe(
+      "Songs can be up to about 5 minutes on this computer. These lyrics may be cut off at the end.",
+    );
+    expect(lengthNote(lines(70), 360)).toBeNull();
+    expect(lengthNote(lines(90), 360)).toContain("about 6 minutes");
+  });
+  it("says nothing before the limit is known", () => {
+    expect(lengthNote(lines(200), undefined)).toBeNull();
   });
 });
