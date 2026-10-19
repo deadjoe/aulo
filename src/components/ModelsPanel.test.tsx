@@ -26,6 +26,7 @@ const plan: models.ModelPlan = {
   license: "CC BY-NC 4.0",
   licenseUrl: "https://creativecommons.org/licenses/by-nc/4.0/",
   fileCount: 17,
+  ownCopyBytes: 0,
 };
 const initial: models.ModelStatus = {
   phase: "not_started",
@@ -157,6 +158,31 @@ describe("native model preparation", () => {
       ),
     );
     expect(screen.queryByText("Ready")).not.toBeInTheDocument();
+  });
+  it("asks before a chosen folder replaces Aulo's own download", async () => {
+    vi.mocked(models.getModelPlan).mockResolvedValue({
+      ...plan,
+      ownCopyBytes: 4_340_000_000,
+    });
+    const user = userEvent.setup();
+    render(<ModelsPanel />);
+    await user.click(
+      await screen.findByRole("button", {
+        name: /Already have the music models/,
+      }),
+    );
+    const ask = await screen.findByRole("alertdialog");
+    expect(ask).toHaveTextContent("deletes the copy it downloaded (4.34 GB)");
+    expect(models.verifyModels).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(models.verifyModels).not.toHaveBeenCalled();
+    await user.click(
+      screen.getByRole("button", { name: /Already have the music models/ }),
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Use this folder" }),
+    );
+    expect(models.verifyModels).toHaveBeenCalledWith("/existing/models");
   });
   it("offers no download or folder on a computer that cannot make songs", async () => {
     vi.mocked(models.getModelPlan).mockRejectedValue(

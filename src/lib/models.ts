@@ -8,6 +8,8 @@ export interface ModelPlan {
   license: string;
   licenseUrl: string;
   fileCount: number;
+  /** What Aulo's own models folder holds; choosing another folder deletes it. */
+  ownCopyBytes: number;
 }
 export type ModelPhase =
   | "not_started"
