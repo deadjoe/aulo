@@ -14,9 +14,9 @@ Upgrading GROOVE or YuE2 touches the engine build, the bridge, the model manifes
 
 The Rust `engine_status` command uses only the engine inside the app bundle. Debug builds may instead use an absolute `AULO_DEV_PYTHON` interpreter, or an engine built into `src-tauri/engine`. Release builds ignore both. No interpreter selector, command field, or dependency configuration is exposed to users. There is no PATH search or shell invocation, and the engine never writes bytecode into the signed bundle.
 
-The probe checks the installed GROOVE 1.0.10 and YuE2 0.1.6 versions, imports the real adapter and PyTorch, and selects an engine with GROOVE's own rules:
+The probe checks the installed GROOVE 1.0.10 and YuE2 0.1.6 versions, imports the real adapter and PyTorch, and reports the engine it would run:
 
-- `gguf_engine.auto_backend` decides between PyTorch and the GGUF engine (yue2.cpp), including NVIDIA cards that a CPU-only PyTorch cannot see.
+- The engine plan (see Engine plan below) chooses PyTorch or the GGUF engine (yue2.cpp) and is passed as `AULO_ENGINE`; only without a plan (development) does GROOVE's `gguf_engine.auto_backend` decide, which also sees NVIDIA cards that a CPU-only PyTorch cannot.
 - On CUDA without a usable FlashAttention kernel, GROOVE's eager decoder is used, as in `webui/runtime.effective_backend`.
 - A computer whose only option is the CPU is reported as unsupported; Aulo does not offer multi-hour CPU generation.
 

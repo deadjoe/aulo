@@ -17,6 +17,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
+use tauri::Manager;
 
 const RESERVE: u64 = 512 * 1024 * 1024;
 
@@ -325,6 +326,9 @@ pub struct ModelPlan {
     pub license: String,
     pub license_url: String,
     pub file_count: usize,
+    /// What Aulo's own models folder holds now (downloaded or partly downloaded),
+    /// which choosing another folder deletes.
+    pub own_copy_bytes: u64,
 }
 #[tauri::command]
 pub async fn model_plan(app: tauri::AppHandle) -> Result<ModelPlan, String> {
@@ -359,6 +363,7 @@ pub async fn model_plan(app: tauri::AppHandle) -> Result<ModelPlan, String> {
             license: m.license,
             license_url: m.license_url,
             file_count: m.files.len(),
+            own_copy_bytes: crate::support::folder_bytes(&models_home(&base)),
         })
     })
     .await
@@ -476,19 +481,22 @@ pub fn needs_checking(manager: &ModelManager) {
         }
     });
 }
+/// Polled by setup and Settings. Off the main thread: on a computer that cannot make
+/// songs, the plan is looked at again now and then, which runs `nvidia-smi` on Windows.
 #[tauri::command]
-pub fn model_status(
-    app: tauri::AppHandle,
-    manager: tauri::State<ModelManager>,
-) -> Result<SetupStatus, String> {
-    let mut state = manager.0.status.held();
-    if state.is_none() {
-        let m = manifest()?;
-        let base = base_path(&app)?;
-        let s = restore_status(&base, &m);
-        *state = Some(s);
-    }
-    Ok(state.as_ref().unwrap().clone())
+pub async fn model_status(app: tauri::AppHandle) -> Result<SetupStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let manager = app.state::<ModelManager>();
+        let mut state = manager.0.status.held();
+        if state.is_none() {
+            let m = manifest()?;
+            let base = base_path(&app)?;
+            *state = Some(restore_status(&base, &m));
+        }
+        Ok(state.as_ref().unwrap().clone())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 fn restore_status(base: &Path, m: &Manifest) -> SetupStatus {
     let mut s = SetupStatus::initial(m.total());
@@ -738,8 +746,15 @@ pub async fn remove_models(
 pub fn verify_models(
     app: tauri::AppHandle,
     manager: tauri::State<ModelManager>,
+    songs: tauri::State<crate::songs::SongService>,
     folder: String,
 ) -> Result<(), String> {
+    // A folder that checks out replaces Aulo's own copy, which a song may be reading.
+    if songs.making_songs() {
+        return Err(
+            "Wait until the songs being made are finished, then choose the folder again.".into(),
+        );
+    }
     let root = PathBuf::from(folder)
         .canonicalize()
         .map_err(|_| "That folder can’t be opened. Choose it again.".to_string())?;
@@ -754,12 +769,15 @@ pub fn verify_models(
     manager.begin(&root, m.total())?;
     manager.update(|s| s.operation = Some("verify".into()));
     let manager = manager.inner().clone();
+    let songs = songs.inner().clone();
     std::thread::spawn(move || {
         let _guard = BusyGuard(manager.clone());
         let result = (|| {
             let _lock = lock_storage(&base)?;
             verify_existing(&root, &m, &manager)?;
             // From now on these are the models; Aulo's own copy would be a second set.
+            // The engine may still hold those files open (Windows cannot delete them then).
+            songs.unload_engine()?;
             remove_managed_except(&base, &root)?;
             save_verified(&base, &root, &m)?;
             manager.phase("verified", "Your music models are ready.");

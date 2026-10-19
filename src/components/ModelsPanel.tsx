@@ -39,6 +39,8 @@ export default function ModelsPanel() {
   const [pending, setPending] = useState(false);
   const [accepted, setAccepted] = useState(false);
   const [pauseRequested, setPauseRequested] = useState(false);
+  // A folder waiting for the person to agree that Aulo's own copy is deleted.
+  const [replacing, setReplacing] = useState<string | null>(null);
   const samples = useRef<Sample[]>([]);
   useEffect(() => {
     if (!desktop) return;
@@ -97,7 +99,9 @@ export default function ModelsPanel() {
   async function choose() {
     await action(async () => {
       const folder = await chooseModelFolder();
-      if (folder) await verifyModels(folder);
+      if (!folder) return;
+      if (plan && plan.ownCopyBytes > 0) setReplacing(folder);
+      else await verifyModels(folder);
     });
   }
   const active = modelOperationActive(status);
@@ -303,6 +307,39 @@ export default function ModelsPanel() {
               </span>
               {verified && <ArrowRight size={17} />}
             </button>
+          )}
+          {replacing && plan && (
+            <div
+              className="settings-confirm"
+              role="alertdialog"
+              aria-label="Use the music models in this folder?"
+            >
+              <strong>Use the music models in this folder?</strong>
+              <p>
+                Once Aulo has checked them, it deletes the copy it downloaded (
+                {formatBytes(plan.ownCopyBytes)}), so this computer keeps one
+                set. If this folder is moved or its drive is unplugged later,
+                Aulo needs to download the music models again.
+              </p>
+              <div className="dialog-actions">
+                <button
+                  className="secondary"
+                  onClick={() => setReplacing(null)}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="danger-button"
+                  onClick={() => {
+                    const folder = replacing;
+                    setReplacing(null);
+                    void action(() => verifyModels(folder));
+                  }}
+                >
+                  Use this folder
+                </button>
+              </div>
+            </div>
           )}
           {!status && !error && !blocked && (
             <p className="helper">

@@ -161,10 +161,7 @@ pub fn current() -> Result<Plan, &'static str> {
 /// Setup's "Check again": a computer that could not make songs gets a new answer
 /// from what was just found. A plan already in use is kept.
 pub fn recheck(hardware: &Hardware) {
-    DECISION
-        .lock()
-        .unwrap()
-        .recheck(Instant::now(), plan(hardware));
+    DECISION.held().recheck(Instant::now(), plan(hardware));
 }
 
 #[cfg(test)]

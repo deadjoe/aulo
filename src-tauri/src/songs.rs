@@ -155,7 +155,8 @@ pub fn failure_message(reason: &str) -> &'static str {
         "graphics_driver" => "Your graphics card’s driver needs an update. Update the NVIDIA driver, then try again.",
         "models_damaged" => "The music models need to be checked. Open Settings › Music models, then try again.",
         "models_unverified" => "Your music models need to be checked again before creating.",
-        "engine_damaged" | "folder_name" => "Part of Aulo is missing or can’t be opened. Install Aulo again, then try again.",
+        "engine_damaged" => "Part of Aulo is missing or can’t be opened. Install Aulo again, then try again.",
+        "folder_name" => "The music models are in a folder this PC can’t open because of letters in its location. Open Settings › Music models and choose a folder like C:\\Aulo Models.",
         "engine_start" => "The music engine could not start. Close and reopen Aulo to try again.",
         "engine_stopped" => "The music engine stopped unexpectedly. Try creating this song again.",
         "engine_hang" => "The music engine stopped responding. Try creating this song again.",
@@ -1557,7 +1558,10 @@ impl Turns {
     fn take(&'static self) -> Turn {
         let mut taken = self.taken.held();
         while *taken >= self.limit {
-            taken = self.freed.wait(taken).unwrap();
+            taken = self
+                .freed
+                .wait(taken)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
         }
         *taken += 1;
         Turn(self)

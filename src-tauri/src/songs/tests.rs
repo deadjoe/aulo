@@ -526,8 +526,8 @@ fn each_engine_failure_says_what_to_do_and_unknown_reasons_stay_unknown() {
         assert_eq!(w.failure.as_deref(), Some(reason));
         messages.insert(w.message.unwrap());
     }
-    // Damaged and unopenable installs share one message; every other reason has its own.
-    assert_eq!(messages.len(), ENGINE_FAILURES.len() - 1);
+    // Every reason has its own message.
+    assert_eq!(messages.len(), ENGINE_FAILURES.len());
     let mut w = work(ID, SongState::Running);
     apply_event(&mut w, &event("rm -rf"), folder);
     assert_eq!(w.failure.as_deref(), Some("unknown"));
@@ -625,4 +625,30 @@ fn the_usual_time_comes_from_the_last_songs_this_computer_finished() {
         failed,
     ];
     assert_eq!(typical_run_ms(&works), Some(200_000));
+}
+
+#[test]
+fn every_reason_the_engine_can_send_is_known_and_explained() {
+    let bridge = include_str!("../../../runtime/bridge.py");
+    let start = bridge.find("FAILURE_PATTERNS = (").unwrap();
+    let end = start + bridge[start..].find("\n)\n").unwrap();
+    let sent: Vec<&str> = bridge[start..end]
+        .split("(\"")
+        .skip(1)
+        .map(|rest| &rest[..rest.find('"').unwrap()])
+        .collect();
+    assert_eq!(sent.len(), 6, "{sent:?}");
+    let generic = failure_message("anything else");
+    for reason in sent {
+        assert!(
+            ENGINE_FAILURES.contains(&reason),
+            "{reason} is not accepted"
+        );
+        assert_ne!(failure_message(reason), generic, "{reason} has no message");
+    }
+    // Each reason points to its own remedy.
+    assert_ne!(
+        failure_message("folder_name"),
+        failure_message("engine_damaged")
+    );
 }

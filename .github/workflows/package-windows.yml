@@ -38,6 +38,18 @@ jobs:
             src-tauri/engine/python/python.exe -I runtime/bridge.py
       - name: Bundle Aulo with the engine
         run: npm run bundle -- --bundles nsis
+      - name: Check the installer carries the GGUF engine and fits NSIS
+        shell: pwsh
+        run: |
+          Get-ChildItem src-tauri/engine/yue2cpp | Format-Table Name, Length
+          $synth = Get-ChildItem src-tauri/target/release -Recurse -Filter yue-synth.exe |
+            Where-Object { $_.FullName -notmatch '\\bundle\\' }
+          if (-not $synth) { throw "yue-synth.exe is not among the app's resources" }
+          $synth | ForEach-Object { $_.FullName }
+          $installer = Get-ChildItem src-tauri/target/release/bundle/nsis/*.exe
+          $installer | ForEach-Object { "{0}: {1:N0} MB" -f $_.Name, ($_.Length / 1MB) }
+          # NSIS cannot build or reliably run installers past about 2 GB.
+          if (($installer | Measure-Object Length -Sum).Sum -gt 2GB) { throw "the installer is over 2 GB" }
       - uses: actions/upload-artifact@v4
         with:
           name: Aulo-windows-x64
