@@ -1,5 +1,6 @@
 mod audio;
 mod collections;
+mod drafts;
 mod engine;
 mod models;
 mod runner;
@@ -147,6 +148,7 @@ pub fn run() {
         .manage(engine::EngineCache::default())
         .manage(songs::SongService::default())
         .manage(settings::SettingsStore::default())
+        .manage(drafts::SavedStore::default())
         .invoke_handler(tauri::generate_handler![
             inspect_hardware,
             engine::engine_status,
@@ -180,6 +182,9 @@ pub fn run() {
             songs::reveal_song,
             share::share_song,
             settings::get_settings,
+            drafts::list_saved,
+            drafts::save_text,
+            drafts::delete_saved,
             settings::update_settings,
             songs::engine_memory,
             songs::release_engine,

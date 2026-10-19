@@ -931,6 +931,13 @@ pub async fn create_song(
     service.0 .1.notify_one();
     service.ensure_worker(&app);
     SongService::publish(&app, &work);
+    // Keep the words and style the song was made from in Saved lyrics and Saved styles.
+    let lyrics = if work.request.instrumental {
+        ""
+    } else {
+        work.request.lyrics.as_str()
+    };
+    crate::drafts::remember_song(&app, &work.request.title, lyrics, &work.request.style);
     Ok(work)
 }
 

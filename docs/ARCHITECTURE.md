@@ -53,6 +53,10 @@ The Tauri host will own the child process lifecycle and recover from crashes. Th
 
 Do not update a loaded engine while a job is running. Keep the previous working runtime until the replacement passes health checks. Store models and works outside the application bundle. Signing, update verification, and rollback remain future implementation work.
 
+## Lyrics and styles tools
+
+In Advanced mode the Lyrics card has Undo, Redo, New draft, Saved lyrics and a full-screen editor; the Styles card has Saved styles, Undo changes, Save styles and Clear styles, and no suggestion chips. Undo history is per field (`src/lib/useUndo.ts`): typing within 0.8 s is one step, and loading, clearing or adding a section are steps of their own; ⌘Z / ⌘⇧Z (Ctrl+Z / Ctrl+Y) use the same history. Saved lyrics and styles live in `<app-data>/saved.json` (`src-tauri/src/drafts.rs`), newest first, 200 of each at most; saving the same words again moves them up. New draft saves the current lyrics before clearing them, and creating a song saves its lyrics and style under the song title. Deleting a saved entry asks first.
+
 ## Settings
 
 `SettingsPanel` has five sections: Creating, Storage, Music models, AI assistant and Help & About. Choices are saved to `<app-data>/settings.json` (`src-tauri/src/settings.rs`) and applied at once: "Between songs" sets whether the engine is unloaded 10 minutes after the last song or kept until Aulo quits, and "Free up memory now" unloads it when no song is being made. Songs that have been in Aulo's Trash longer than the chosen period are deleted when the library loads and when the setting changes, the same way as deleting by hand. Removing the music models deletes only Aulo's own `models` folder and its record; a folder the person chose is left untouched. The problem report (`src-tauri/src/support.rs`) holds versions, the computer's specification, model and engine state, song counts and the end of the engine log, with every line of lyrics, styles and titles removed. A system notification is shown when a song finishes or fails while Aulo is in the background.

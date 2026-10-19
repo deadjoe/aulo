@@ -1,12 +1,18 @@
 import { useState } from "react";
 import {
+  Bookmark,
   ChevronDown,
+  Eraser,
   Music2,
-  RefreshCw,
   LoaderCircle,
   Trash2,
+  Undo2,
   WandSparkles,
 } from "lucide-react";
+import { FullScreenLyrics, LyricsToolbar } from "./LyricsTools";
+import SavedPopover from "./SavedPopover";
+import { saveText } from "../lib/saved";
+import { useUndo } from "../lib/useUndo";
 import { addSection, addStyle, SECTIONS, styleIdeas } from "../lib/composer";
 import type { CreationStatus, SongRequest, Vocal } from "../lib/songs";
 
@@ -94,6 +100,7 @@ export default function Composer({
   onOpenSetup,
   onClear,
   saveTo,
+  onNotify,
 }: {
   request: SongRequest;
   onChange: (request: SongRequest) => void;
@@ -104,12 +111,21 @@ export default function Composer({
   onClear: () => void;
   /** The "Save to" control, provided by the app. */
   saveTo: React.ReactNode;
+  /** Short messages for the person (saved, couldn't save). */
+  onNotify: (text: string) => void;
 }) {
   const [mode, setModeState] = useState<Mode>(initialMode);
-  const [round, setRound] = useState(0);
   const [moreOpen, setMoreOpen] = useState(true);
+  const [fullScreen, setFullScreen] = useState(false);
   const set = (changes: Partial<SongRequest>) =>
     onChange({ ...request, ...changes });
+  const lyricsHistory = useUndo(request.lyrics, (lyrics) => set({ lyrics }));
+  const styleHistory = useUndo(request.style, (style) => set({ style }));
+  const lyricsTools = {
+    lyrics: request.lyrics,
+    history: lyricsHistory,
+    onError: onNotify,
+  };
   function setMode(next: Mode) {
     setModeState(next);
     try {
@@ -125,26 +141,17 @@ export default function Composer({
       : "";
   const ready = status?.ready === true;
   const canCreate = ready && !missing && !creating;
-  const ideas = styleIdeas(round, request.style);
+  const ideas = styleIdeas(0, request.style);
 
   const lyricsCard = (
     <section className="field-card lyrics-card">
       <header>
         <label htmlFor="lyrics">Lyrics</label>
         {mode === "advanced" && !request.instrumental && (
-          <span className="section-buttons" aria-label="Add a section">
-            {SECTIONS.map((section) => (
-              <button
-                key={section}
-                type="button"
-                onClick={() =>
-                  set({ lyrics: addSection(request.lyrics, section) })
-                }
-              >
-                + {section}
-              </button>
-            ))}
-          </span>
+          <LyricsToolbar
+            {...lyricsTools}
+            onFullScreen={() => setFullScreen(true)}
+          />
         )}
       </header>
       <textarea
@@ -156,8 +163,24 @@ export default function Composer({
             ? "Instrumental songs have no lyrics."
             : "Write the words you want sung.\n\nTip: label parts like [Verse] and [Chorus] to shape the song."
         }
-        onChange={(e) => set({ lyrics: e.target.value })}
+        onChange={(e) => lyricsHistory.type(e.target.value)}
+        onKeyDown={lyricsHistory.onKeyDown}
       />
+      {mode === "advanced" && !request.instrumental && (
+        <span className="section-buttons" aria-label="Add a section">
+          {SECTIONS.map((section) => (
+            <button
+              key={section}
+              type="button"
+              onClick={() =>
+                lyricsHistory.replace(addSection(request.lyrics, section))
+              }
+            >
+              + {section}
+            </button>
+          ))}
+        </span>
+      )}
     </section>
   );
 
@@ -230,35 +253,71 @@ export default function Composer({
               onChange={(instrumental) => set({ instrumental })}
             />
             <section className="field-card styles-card">
-              <label htmlFor="style">Styles</label>
+              <header>
+                <label htmlFor="style">Styles</label>
+                <span
+                  className="field-tools"
+                  role="toolbar"
+                  aria-label="Styles tools"
+                >
+                  <SavedPopover
+                    kind="styles"
+                    onPick={(saved) => styleHistory.replace(saved.text)}
+                    onError={onNotify}
+                  />
+                  <button
+                    type="button"
+                    className="tool-button"
+                    aria-label="Undo changes"
+                    title="Undo changes"
+                    disabled={!styleHistory.canUndo}
+                    onClick={styleHistory.undo}
+                  >
+                    <Undo2 size={17} />
+                  </button>
+                  <button
+                    type="button"
+                    className="tool-button"
+                    aria-label="Save styles"
+                    title="Save styles"
+                    disabled={!request.style.trim()}
+                    onClick={() =>
+                      void saveText(
+                        "styles",
+                        request.style,
+                        request.title,
+                      ).then(
+                        () => onNotify("Saved to your styles."),
+                        (e: unknown) =>
+                          onNotify(
+                            typeof e === "string"
+                              ? e
+                              : "These styles couldn’t be saved.",
+                          ),
+                      )
+                    }
+                  >
+                    <Bookmark size={16} />
+                  </button>
+                  <button
+                    type="button"
+                    className="tool-button"
+                    aria-label="Clear styles"
+                    title="Clear styles"
+                    disabled={!request.style}
+                    onClick={() => styleHistory.replace("")}
+                  >
+                    <Eraser size={16} />
+                  </button>
+                </span>
+              </header>
               <textarea
                 id="style"
                 value={request.style}
                 placeholder="dreamy indie pop, warm analog synths, female vocal, 92 bpm"
-                onChange={(e) => set({ style: e.target.value })}
+                onChange={(e) => styleHistory.type(e.target.value)}
+                onKeyDown={styleHistory.onKeyDown}
               />
-              <div className="chip-row">
-                <button
-                  type="button"
-                  className="chip-icon"
-                  aria-label="Show other style ideas"
-                  onClick={() => setRound((r) => r + 1)}
-                >
-                  <RefreshCw size={15} />
-                </button>
-                {ideas.map((idea) => (
-                  <button
-                    key={idea}
-                    type="button"
-                    className="chip"
-                    onClick={() =>
-                      set({ style: addStyle(request.style, idea) })
-                    }
-                  >
-                    {idea}
-                  </button>
-                ))}
-              </div>
             </section>
             <section className="field-card more-card">
               <button
@@ -368,6 +427,12 @@ export default function Composer({
         </button>
       </footer>
       {ready && missing && <p className="composer-hint">{missing}</p>}
+      {fullScreen && (
+        <FullScreenLyrics
+          {...lyricsTools}
+          onDone={() => setFullScreen(false)}
+        />
+      )}
     </section>
   );
 }

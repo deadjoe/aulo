@@ -2841,3 +2841,216 @@ input[type="range"]:disabled {
     transition: none !important;
   }
 }
+
+/* Lyrics and styles tools */
+.field-card > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 32px;
+}
+.field-tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.tool-button {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  color: var(--soft);
+}
+.tool-button:hover:not(:disabled),
+.tool-button[aria-expanded="true"] {
+  background: var(--raised);
+  color: var(--text);
+}
+.tool-button:disabled {
+  color: var(--faint);
+  opacity: 0.6;
+}
+.tool-button.labelled {
+  display: inline-flex;
+  gap: 8px;
+  width: auto;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: var(--raised);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 550;
+}
+.lyrics-card .section-buttons {
+  padding-top: 2px;
+}
+.saved-popover {
+  width: min(380px, 92vw);
+  max-height: min(440px, 70vh);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 20px;
+  background: #1d201c;
+  border: 1px solid var(--line-strong);
+  box-shadow: 0 30px 70px -20px #000;
+  z-index: 50;
+}
+.saved-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 0 14px;
+  height: 40px;
+  border-radius: 999px;
+  background: var(--raised);
+  color: var(--muted);
+}
+.saved-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-size: 14px;
+}
+.saved-search input:focus-visible {
+  outline: none;
+}
+.saved-list {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.saved-empty {
+  padding: 18px 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.saved-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 14px;
+}
+.saved-item:hover {
+  background: var(--raised);
+}
+.saved-pick {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 6px 10px 12px;
+  text-align: left;
+  color: var(--muted);
+}
+.saved-pick > svg {
+  flex: none;
+  margin-top: 2px;
+}
+.saved-pick span {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.saved-pick strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+.saved-pick small {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: pre-line;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--soft);
+}
+.saved-pick em {
+  font-style: normal;
+  font-size: 12px;
+  color: var(--faint);
+}
+.saved-item .icon-button {
+  margin-right: 6px;
+  color: var(--muted);
+}
+.saved-item.confirming {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  padding: 12px;
+  background: var(--raised);
+}
+.saved-item.confirming p {
+  font-size: 13px;
+  color: var(--soft);
+}
+.saved-item.confirming div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.danger-button.small {
+  min-height: 34px;
+  padding: 0 14px;
+  font-size: 13px;
+}
+.lyrics-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  animation: appear 0.16s ease;
+}
+.lyrics-fullscreen header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 22px;
+}
+.lyrics-fullscreen .field-tools {
+  gap: 6px;
+}
+.done-button {
+  min-height: 40px;
+  padding: 0 22px;
+  border-radius: 999px;
+  background: var(--text);
+  color: #171916;
+  font-size: 15px;
+  font-weight: 600;
+}
+.lyrics-fullscreen textarea {
+  flex: 1;
+  width: min(820px, 100%);
+  margin: 0 auto;
+  padding: 12px 28px 40px;
+  resize: none;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-size: 17px;
+  line-height: 1.7;
+}
+.lyrics-fullscreen textarea:focus-visible {
+  outline: none;
+}
+.lyrics-fullscreen textarea::placeholder {
+  color: #858a7f;
+}
