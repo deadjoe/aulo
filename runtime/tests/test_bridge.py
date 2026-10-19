@@ -121,8 +121,9 @@ class BridgeTests(unittest.TestCase):
         gguf.auto_backend.assert_not_called()
 
     def test_prepare_requests_name_an_absolute_model_folder(self):
+        absolute = str(BRIDGE.parent)  # absolute on every platform
         self.assertEqual(bridge.validate_request(
-            {"protocolVersion": 3, "operation": "prepare", "modelRoot": "/data/models"}),
+            {"protocolVersion": 3, "operation": "prepare", "modelRoot": absolute}),
             "prepare")
         for request in [{"protocolVersion": 3, "operation": "prepare"},
                         {"protocolVersion": 3, "operation": "prepare", "modelRoot": "models"},
