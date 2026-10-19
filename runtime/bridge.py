@@ -170,36 +170,15 @@ def select_backend(device, adapter, gguf_engine, wanted=None):
 
 
 def validate_request(request):
-    """The first line: ``probe``, ``serve`` or ``prepare`` (GGUF files, once)."""
+    """The first line: ``probe`` or ``serve``."""
     if not isinstance(request, dict) or request.get("protocolVersion") != PROTOCOL_VERSION:
         raise ValueError("Unsupported engine protocol.")
     operation = request.get("operation")
-    if operation not in ("probe", "serve", "prepare"):
+    if operation not in ("probe", "serve"):
         raise ValueError("Unknown engine operation.")
-    if operation == "prepare":
-        if set(request) != {"protocolVersion", "operation", "modelRoot"}:
-            raise ValueError("Unexpected fields.")
-        if not isinstance(request["modelRoot"], str) or not Path(request["modelRoot"]).is_absolute():
-            raise ValueError("modelRoot must be an absolute application-owned path.")
-    elif set(request) != {"protocolVersion", "operation"}:
+    if set(request) != {"protocolVersion", "operation"}:
         raise ValueError("Unexpected fields.")
     return operation
-
-
-def prepare(runtime, request, report):
-    """GROOVE's one-time GGUF preparation (convert and quantise the checkpoints), done ahead
-    of the first song. Nothing to do for the PyTorch engine."""
-    if runtime["backend"] == "gguf":
-        from yue2_groove import gguf_engine
-
-        root = Path(request["modelRoot"]).resolve(strict=True)
-        model, vae = root / "YuE2-3B", root / "YuE2-Vae"
-        if not model.is_dir() or not vae.is_dir():
-            raise ValueError("The music model folder is incomplete.")
-        gguf_engine.prepare(model, vae, log=lambda _line: report("progress", stage="preparing"))
-    elif runtime["backend"] is None:
-        raise RuntimeError("This computer cannot run the music engine.")
-    report("prepared", backend=runtime["backend"])
 
 
 def validate_command(command):
@@ -498,13 +477,10 @@ def main():
             raw = sys.stdin.buffer.readline(MAX_REQUEST_BYTES + 1)
             if len(raw) > MAX_REQUEST_BYTES:
                 raise ValueError("Engine request is too large.")
-            request = json.loads(raw)
-            operation = validate_request(request)
+            operation = validate_request(json.loads(raw))
             runtime = inspect_runtime()
             if operation == "probe":
                 report("probe", **runtime)
-            elif operation == "prepare":
-                prepare(runtime, request, report)
             else:
                 serve(runtime, Commands(sys.stdin.buffer).start(), report)
             code = 0

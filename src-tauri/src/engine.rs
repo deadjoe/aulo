@@ -165,7 +165,7 @@ pub fn bridge_script() -> std::io::Result<tempfile::NamedTempFile> {
 }
 
 /// A bridge process with no shell, no inherited Python configuration and no network.
-pub fn bridge_command(python: &Path, script: &Path, base: &Path) -> Command {
+pub fn bridge_command(python: &Path, script: &Path) -> Command {
     let mut command = Command::new(python);
     command
         // -I ignores every PYTHON* variable, so these settings are flags: never write
@@ -180,8 +180,6 @@ pub fn bridge_command(python: &Path, script: &Path, base: &Path) -> Command {
         // GROOVE's Apple Silicon memory guard: keep PyTorch from driving the Mac into swap.
         .env("PYTORCH_MPS_HIGH_WATERMARK_RATIO", "0.8")
         .env("PYTORCH_MPS_LOW_WATERMARK_RATIO", "0.5")
-        // Converted GGUF files and engine binaries live in Aulo's data folder.
-        .env("YUE2_GROOVE_GGUF", base.join("models").join("gguf"))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped());
     // The engine this computer uses (see plan.rs); the bridge runs exactly that one.
@@ -208,9 +206,9 @@ pub fn bridge_command(python: &Path, script: &Path, base: &Path) -> Command {
     command
 }
 
-fn probe_process(python: &Path, base: &Path, timeout: Duration) -> Result<EngineStatus, String> {
+fn probe_process(python: &Path, timeout: Duration) -> Result<EngineStatus, String> {
     let script = bridge_script().map_err(|e| e.to_string())?;
-    let mut command = bridge_command(python, script.path(), base);
+    let mut command = bridge_command(python, script.path());
     command.stderr(Stdio::null());
     let mut child = command.spawn().map_err(|e| e.to_string())?;
     let output = child.stdout.take().ok_or("Missing engine output")?;
@@ -251,121 +249,7 @@ fn probe_process(python: &Path, base: &Path, timeout: Duration) -> Result<Engine
     parse_probe(&bytes)
 }
 
-/// Where Aulo notes that the GGUF files for a model folder are ready.
-fn prepared_marker(base: &Path) -> PathBuf {
-    base.join("models").join("gguf").join("aulo-prepared.json")
-}
-
-/// Whether this computer's engine can start without first preparing the models.
-pub fn models_prepared(base: &Path, model_root: &Path) -> bool {
-    prepared_for(crate::plan::current().ok(), base, model_root)
-}
-
-fn prepared_for(plan: Option<crate::plan::Plan>, base: &Path, model_root: &Path) -> bool {
-    match plan {
-        Some(plan) if plan.engine == crate::plan::Engine::Gguf => {
-            std::fs::read(prepared_marker(base))
-                .ok()
-                .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
-                .is_some_and(|marker| {
-                    marker["modelRoot"].as_str() == Some(&*model_root.to_string_lossy())
-                        && marker["quant"] == "Q8_0"
-                })
-        }
-        _ => true,
-    }
-}
-
-/// Run GROOVE's one-time GGUF preparation in a bridge process and wait for it.
-fn prepare_process(
-    python: &Path,
-    base: &Path,
-    model_root: &Path,
-    timeout: Duration,
-) -> Result<(), String> {
-    let script = bridge_script().map_err(|e| e.to_string())?;
-    let mut command = bridge_command(python, script.path(), base);
-    command.stderr(Stdio::from(crate::songs::engine_log(base)?));
-    let mut child = command.spawn().map_err(|e| e.to_string())?;
-    let output = child.stdout.take().ok_or("Missing engine output")?;
-    let reader = std::thread::spawn(move || {
-        let mut bytes = Vec::new();
-        output.take(1 << 20).read_to_end(&mut bytes).map(|_| bytes)
-    });
-    let request = serde_json::json!({
-        "protocolVersion": PROTOCOL_VERSION,
-        "operation": "prepare",
-        "modelRoot": model_root,
-    });
-    let input_result = child
-        .stdin
-        .take()
-        .ok_or("Missing engine input")?
-        .write_all(format!("{request}\n").as_bytes());
-    let started = Instant::now();
-    let result = loop {
-        if input_result.is_err() {
-            break Err("Engine input failed".to_string());
-        }
-        match child.try_wait() {
-            Ok(Some(status)) if status.success() => break Ok(()),
-            Ok(Some(_)) => break Err("Preparation failed".into()),
-            Err(_) => break Err("Engine process failed".into()),
-            Ok(None) if started.elapsed() >= timeout => break Err("Preparation timed out".into()),
-            Ok(None) => std::thread::sleep(Duration::from_millis(200)),
-        }
-    };
-    if result.is_err() {
-        let _ = child.kill();
-        let _ = child.wait();
-    }
-    let bytes = reader
-        .join()
-        .map_err(|_| "Engine output failed")?
-        .unwrap_or_default();
-    result?;
-    let finished = String::from_utf8_lossy(&bytes)
-        .lines()
-        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .any(|event| event["event"] == "prepared");
-    if finished {
-        Ok(())
-    } else {
-        Err("Preparation did not finish".into())
-    }
-}
-
-/// Make the music models ready for this computer's engine, once. Waits for a
-/// preparation already running instead of starting a second one.
-#[tauri::command]
-pub async fn prepare_engine(app: tauri::AppHandle) -> Result<(), String> {
-    static RUNNING: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    let base = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let resources = resources(&app)?;
-    let model_root =
-        crate::models::verified_root(&app, &app.state::<crate::models::ModelManager>())
-            .ok_or("Download the music models first.")?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let _turn = RUNNING.lock().unwrap_or_else(|e| e.into_inner());
-        if models_prepared(&base, &model_root) {
-            return Ok(());
-        }
-        let python = interpreter(&resources);
-        if !python.is_file() {
-            return Err("Part of Aulo is missing. Reinstall Aulo to fix it.".to_string());
-        }
-        prepare_process(&python, &base, &model_root, Duration::from_secs(3600)).map_err(|_| {
-            "Aulo couldn’t get the music models ready. Make sure there are about 12 GB free, then try again."
-                .to_string()
-        })?;
-        let marker = serde_json::json!({ "modelRoot": model_root, "quant": "Q8_0" });
-        std::fs::write(prepared_marker(&base), marker.to_string()).map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
-pub fn inspect(base: &Path, resources: &Path) -> EngineStatus {
+pub fn inspect(resources: &Path) -> EngineStatus {
     let python = interpreter(resources);
     if !python.is_file() {
         // The engine ships inside Aulo, so this only happens to a damaged install.
@@ -374,7 +258,7 @@ pub fn inspect(base: &Path, resources: &Path) -> EngineStatus {
             "Part of Aulo is missing. Reinstall Aulo to fix it.",
         );
     }
-    probe_process(&python, base, Duration::from_secs(60)).unwrap_or_else(|_| {
+    probe_process(&python, Duration::from_secs(60)).unwrap_or_else(|_| {
         EngineStatus::unavailable(
             "unavailable",
             "The music engine could not start. Close and reopen Aulo to try again.",
@@ -387,9 +271,8 @@ pub async fn engine_status(app: tauri::AppHandle) -> Result<EngineStatus, String
     if let Some(status) = app.state::<EngineCache>().reusable(Instant::now()) {
         return Ok(status);
     }
-    let base = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let resources = resources(&app)?;
-    let status = tauri::async_runtime::spawn_blocking(move || inspect(&base, &resources))
+    let status = tauri::async_runtime::spawn_blocking(move || inspect(&resources))
         .await
         .map_err(|e| e.to_string())?;
     app.state::<EngineCache>()
@@ -405,11 +288,7 @@ mod tests {
 
     #[test]
     fn the_engine_never_writes_bytecode_and_always_speaks_utf8() {
-        let command = bridge_command(
-            Path::new("python3"),
-            Path::new("bridge.py"),
-            Path::new("/a"),
-        );
+        let command = bridge_command(Path::new("python3"), Path::new("bridge.py"));
         let args: Vec<_> = command.get_args().map(|a| a.to_string_lossy()).collect();
         assert_eq!(args, ["-I", "-B", "-X", "utf8", "bridge.py"]);
     }
@@ -425,7 +304,7 @@ mod tests {
             "import sys\nsys.path.insert(0, sys.argv[1])\nimport probe_module\n",
         )
         .unwrap();
-        let Ok(status) = bridge_command(Path::new("python3"), &script, dir.path())
+        let Ok(status) = bridge_command(Path::new("python3"), &script)
             .arg(dir.path())
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -446,34 +325,6 @@ mod tests {
         assert_eq!(status.state, "not_installed");
         assert!(status.message.contains("Reinstall"));
         assert!(!status.generation_ready);
-    }
-
-    #[test]
-    fn gguf_needs_its_one_time_preparation_and_pytorch_does_not() {
-        use crate::plan::{Engine, Plan};
-        let dir = tempfile::tempdir().unwrap();
-        let root = Path::new("/data/models/yue2-source-v1");
-        let gguf = Some(Plan {
-            engine: Engine::Gguf,
-            context_cap: None,
-        });
-        let torch = Some(Plan {
-            engine: Engine::Torch,
-            context_cap: None,
-        });
-        assert!(prepared_for(torch, dir.path(), root));
-        assert!(!prepared_for(gguf, dir.path(), root));
-        std::fs::create_dir_all(prepared_marker(dir.path()).parent().unwrap()).unwrap();
-        std::fs::write(
-            prepared_marker(dir.path()),
-            serde_json::json!({"modelRoot": root, "quant": "Q8_0"}).to_string(),
-        )
-        .unwrap();
-        assert!(prepared_for(gguf, dir.path(), root));
-        // Other models, or a damaged note, need preparing again.
-        assert!(!prepared_for(gguf, dir.path(), Path::new("/elsewhere")));
-        std::fs::write(prepared_marker(dir.path()), b"{").unwrap();
-        assert!(!prepared_for(gguf, dir.path(), root));
     }
 
     #[test]
@@ -534,40 +385,16 @@ mod tests {
             std::fs::write(&executable, script).unwrap();
             std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
             let started = Instant::now();
-            assert!(probe_process(&executable, dir.path(), Duration::from_millis(100)).is_err());
+            assert!(probe_process(&executable, Duration::from_millis(100)).is_err());
             assert!(started.elapsed() < Duration::from_secs(3));
         }
-    }
-
-    /// AULO_FORCE_ENGINE=gguf AULO_DEV_PYTHON=… AULO_DEV_MODELS=… AULO_DEV_OUTPUT=…
-    #[test]
-    #[ignore = "Converts real models for the GGUF engine"]
-    fn live_gguf_preparation() {
-        let python = std::env::var_os("AULO_DEV_PYTHON").expect("Set AULO_DEV_PYTHON");
-        let models = std::env::var_os("AULO_DEV_MODELS").expect("Set AULO_DEV_MODELS");
-        let output =
-            PathBuf::from(std::env::var_os("AULO_DEV_OUTPUT").expect("Set AULO_DEV_OUTPUT"));
-        std::fs::create_dir_all(&output).unwrap();
-        let started = Instant::now();
-        prepare_process(
-            Path::new(&python),
-            &output,
-            Path::new(&models),
-            Duration::from_secs(3600),
-        )
-        .unwrap();
-        eprintln!("prepared in {:.0}s", started.elapsed().as_secs_f64());
-        let status = probe_process(Path::new(&python), &output, Duration::from_secs(120)).unwrap();
-        assert_eq!(status.backend.as_deref(), Some("gguf"));
     }
 
     #[test]
     #[ignore = "Requires an explicitly selected local development engine"]
     fn live_engine_probe() {
         let python = std::env::var_os("AULO_DEV_PYTHON").expect("Set AULO_DEV_PYTHON");
-        let dir = tempfile::tempdir().unwrap();
-        let status =
-            probe_process(Path::new(&python), dir.path(), Duration::from_secs(60)).unwrap();
+        let status = probe_process(Path::new(&python), Duration::from_secs(60)).unwrap();
         assert_eq!(status.state, "ready");
     }
 }

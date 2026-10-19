@@ -53,7 +53,11 @@ Aulo decides the engine from the hardware, never from a person's choice (`src-ta
 
 The bridge receives the plan as `AULO_ENGINE` (and `YUE2_GROOVE_GGUF_MAX_SEQ` for the small context) and runs exactly that engine; if the GGUF binaries are missing it reports a damaged install rather than switching engines. Without a plan (development) it falls back to GROOVE's `BACKEND=auto`. Development builds can force an engine with `AULO_FORCE_ENGINE=gguf|torch`.
 
-The GGUF engine's binaries are GROOVE's pinned yue2.cpp release (`e8b39f7`), fetched and checksum-verified by `scripts/build_engine.py` into `engine/yue2cpp`. Before the first song, the setup guide (or the app, if setup was skipped) runs GROOVE's one-time `gguf_engine.prepare`: it converts and quantises the downloaded checkpoints into `<app-data>/models/gguf` (about 4.3 GB; it needs about 12 GB free while converting) and Aulo records it in `aulo-prepared.json`. Until then the creation status is `preparing`.
+The GGUF engine's binaries are GROOVE's pinned yue2.cpp release (`e8b39f7`), fetched and checksum-verified by `scripts/build_engine.py` into `engine/yue2cpp`.
+
+**One set of weights per computer.** The model download follows the plan (`models::manifest`): the PyTorch engine downloads the official checkpoints (`manifests/music-models.json`, 7.79 GB); the GGUF engine downloads only the published `YuE2-3B-Q8_0.gguf` and `YuE2-Vae-F32.gguf` (pinned revision of `Serveurperso/YuE2-GGUF`, which GROOVE documents as tensor-for-tensor identical to its own conversion) plus the tokenizer, configs and licences from the official repositories (`manifests/music-models-gguf.json`, 4.34 GB). Nothing is converted on the computer. The engine is pointed at that folder's `gguf/` directory, which GROOVE's engine uses as ready-made files.
+
+On Windows, the graphics card and its own memory come from `nvidia-smi`, which every NVIDIA driver installs (also looked for in its older install folder); if it cannot be run, DXGI, which is part of Windows, answers instead.
 
 ## Song service
 

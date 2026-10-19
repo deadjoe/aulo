@@ -571,10 +571,17 @@ impl SongService {
         }
     }
 
-    fn start_engine(&self, base: &Path, resources: &Path) -> Result<EngineProcess, String> {
+    fn start_engine(
+        &self,
+        base: &Path,
+        resources: &Path,
+        model_root: &Path,
+    ) -> Result<EngineProcess, String> {
         let script = engine::bridge_script().map_err(|e| e.to_string())?;
         let python = engine::interpreter(resources);
-        let mut command = engine::bridge_command(&python, script.path(), base);
+        let mut command = engine::bridge_command(&python, script.path());
+        // The downloaded GGUF files, which GROOVE's engine uses as they are.
+        command.env("YUE2_GROOVE_GGUF", model_root.join("gguf"));
         command.stderr(Stdio::from(engine_log(base)?));
         let process = EngineProcess::start(
             command,
@@ -622,9 +629,13 @@ impl SongService {
                 old.kill();
             }
             let resources = engine::resources(app)?;
-            *engine = Some(self.start_engine(&base, &resources).map_err(|_| {
-                "The music engine could not start. Close and reopen Aulo to try again.".to_string()
-            })?);
+            *engine = Some(
+                self.start_engine(&base, &resources, &model_root)
+                    .map_err(|_| {
+                        "The music engine could not start. Close and reopen Aulo to try again."
+                            .to_string()
+                    })?,
+            );
         }
         let process = engine.as_ref().expect("engine started");
         process.send(&generate_command(id, &request, seed, &model_root, &root))?;
@@ -733,13 +744,10 @@ pub fn generate_command(
 #[serde(rename_all = "camelCase")]
 pub struct CreationStatus {
     ready: bool,
-    /// models | engine | unsupported | preparing | ready
+    /// models | engine | unsupported | ready
     blocker: &'static str,
     message: String,
 }
-
-const NOT_PREPARED: &str =
-    "Aulo is getting the music models ready for this computer. This happens once.";
 
 #[tauri::command]
 pub async fn creation_status(app: tauri::AppHandle) -> Result<CreationStatus, String> {
@@ -754,7 +762,6 @@ pub async fn creation_status(app: tauri::AppHandle) -> Result<CreationStatus, St
         });
     }
     let model_root = models::verified_root(&app, &app.state::<models::ModelManager>());
-    let base = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let engine = engine::engine_status(app.clone()).await?;
     Ok(if model_root.is_none() {
         CreationStatus {
@@ -771,12 +778,6 @@ pub async fn creation_status(app: tauri::AppHandle) -> Result<CreationStatus, St
                 "engine"
             },
             message: engine.message.into(),
-        }
-    } else if !engine::models_prepared(&base, model_root.as_deref().unwrap_or(Path::new(""))) {
-        CreationStatus {
-            ready: false,
-            blocker: "preparing",
-            message: NOT_PREPARED.into(),
         }
     } else {
         CreationStatus {
@@ -909,13 +910,10 @@ pub async fn create_song(
     if let Some(reason) = hardware {
         return Err(reason.into());
     }
-    let model_root = models::verified_root(&app, &app.state::<models::ModelManager>());
-    if app.state::<engine::EngineCache>().ready().is_none() || model_root.is_none() {
+    if app.state::<engine::EngineCache>().ready().is_none()
+        || models::verified_root(&app, &app.state::<models::ModelManager>()).is_none()
+    {
         return Err("Aulo isn't ready to create yet.".into());
-    }
-    let base = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    if !engine::models_prepared(&base, model_root.as_deref().unwrap_or(Path::new(""))) {
-        return Err(NOT_PREPARED.into());
     }
     let root = library_root(&app)?;
     let mut request = request;

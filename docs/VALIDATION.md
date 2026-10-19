@@ -3,7 +3,9 @@
 ## Engine plan — 2026-10-19
 
 - Native tests cover the plan for Macs of 4, 8, 12, 15.6, 32 and 64 GB, Windows cards of 6 to 32 GB and none, and other computers; the probe reports missing GGUF binaries as a damaged install; the one-time preparation note is required only for GGUF and only for the same models. Bridge tests: the planned engine is used and never swapped, preparation requests and the preparation itself.
-- On a 64 GB Apple silicon Mac with the engine forced to GGUF (`AULO_FORCE_ENGINE=gguf`) and GROOVE's pinned macOS yue2.cpp binaries: the one-time preparation took 18 s and wrote 4.3 GB; the resident GGUF engine made a song in 107 s (48.6 s of audio), stopped a second one 11 s in, and made a third in 83 s. The PyTorch engine took about 193 s for a song of similar length on the same Mac.
+- On a 64 GB Apple silicon Mac with the engine forced to GGUF (`AULO_FORCE_ENGINE=gguf`) and GROOVE's pinned macOS yue2.cpp binaries, from locally converted GGUF files: the resident GGUF engine made a song in 107 s (48.6 s of audio), stopped a second one 11 s in, and made a third in 83 s. The PyTorch engine took about 193 s for a song of similar length on the same Mac.
+- With only the GGUF model set downloaded and checksum-verified (4.34 GB: the two published GGUF files, tokenizer, configs, licences; no safetensors, no conversion), the forced GGUF engine made songs in 86 s and 82 s and stopped one 11 s in.
+- Model sets: a test checks that each engine's manifest holds only its own weights (two safetensors, or two GGUF files plus the tokenizer).
 - Not covered: an 8–15 GB Mac, Windows, and the small context on a real 8 GB machine.
 
 ## Lyrics and styles tools — 2026-10-19

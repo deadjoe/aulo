@@ -122,7 +122,7 @@ export default function ModelsPanel() {
           <p>
             {plan
               ? `${formatBytes(plan.totalBytes)} · needed once`
-              : "About 7.8 GB · needed once"}
+              : "Needed once"}
           </p>
         </section>
         <span className={`pill${verified ? " pill-ready" : ""}`}>{label}</span>

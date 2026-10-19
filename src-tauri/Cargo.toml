@@ -37,5 +37,5 @@ objc2-foundation = { version = "0.3", features = ["NSArray", "NSGeometry", "NSSt
 objc2-app-kit = { version = "0.3", features = ["NSResponder", "NSSharingService", "NSView"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows = { version = "0.62", features = ["ApplicationModel_DataTransfer", "Foundation", "Storage", "Storage_Streams", "Win32_Foundation", "Win32_System_WinRT", "Win32_UI_Shell"] }
+windows = { version = "0.62", features = ["ApplicationModel_DataTransfer", "Foundation", "Storage", "Storage_Streams", "Win32_Foundation", "Win32_System_WinRT", "Win32_UI_Shell", "Win32_Graphics_Dxgi"] }
 windows-collections = "0.3"
