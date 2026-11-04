@@ -14,13 +14,13 @@ jobs:
   package:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v7
       - run: npm ci
       - name: Build the bundled engine
         run: python3 scripts/build_engine.py --out src-tauri/engine
@@ -31,7 +31,7 @@ jobs:
               src-tauri/engine/python/bin/python3 -I runtime/bridge.py
       - name: Bundle Aulo with the engine
         run: npm run bundle -- --bundles app,dmg
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: Aulo-macos-arm64
           path: src-tauri/target/release/bundle/dmg/*.dmg
