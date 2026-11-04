@@ -21,6 +21,9 @@ jobs:
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
       - uses: astral-sh/setup-uv@v7
+        with:
+          # v7 turns caching on by default; the engine is built fresh, as before.
+          enable-cache: false
       - run: npm ci
       - name: Build the bundled engine
         run: python3 scripts/build_engine.py --out src-tauri/engine
