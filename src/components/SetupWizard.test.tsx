@@ -17,7 +17,7 @@ vi.mock("../lib/songs", () => ({ creationStatus: vi.fn() }));
 afterEach(cleanup);
 
 describe("the last setup step", () => {
-  it("never says all set while the engine cannot create", async () => {
+  it("never says all set while the engine is still starting, nor that the computer can't", async () => {
     vi.mocked(creationStatus).mockResolvedValue({
       ready: false,
       blocker: "engine",
@@ -25,10 +25,12 @@ describe("the last setup step", () => {
     });
     render(<SetupWizard onExplore={() => undefined} initialStep={2} />);
     expect(
-      await screen.findByRole("heading", {
-        name: "Aulo can’t make songs here yet",
-      }),
+      await screen.findByRole("heading", { name: "Getting ready…" }),
     ).toBeVisible();
+    expect(screen.getByText(/starting its music engine/)).toBeVisible();
+    expect(
+      screen.queryByText("Aulo can’t make songs here yet"),
+    ).not.toBeInTheDocument();
     expect(screen.queryByText("You’re all set")).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /Start creating/ }),
@@ -72,5 +74,20 @@ describe("the last setup step", () => {
     expect(
       screen.getByRole("button", { name: /Start creating/ }),
     ).toBeEnabled();
+  });
+  it("asks for a reinstall when part of Aulo is missing", async () => {
+    vi.mocked(creationStatus).mockResolvedValue({
+      ready: false,
+      blocker: "damaged",
+      message: "Part of Aulo is missing. Reinstall Aulo to fix it.",
+    });
+    render(<SetupWizard onExplore={() => undefined} initialStep={2} />);
+    expect(
+      await screen.findByRole("heading", { name: "Part of Aulo is missing" }),
+    ).toBeVisible();
+    expect(screen.getByText(/Reinstall Aulo to fix it/)).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: /Start creating/ }),
+    ).not.toBeInTheDocument();
   });
 });

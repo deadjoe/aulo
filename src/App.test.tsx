@@ -256,6 +256,45 @@ describe("create panel", () => {
   });
 });
 
+describe("readiness", () => {
+  it("enables Create once the models finish in the background, without a window switch", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      localStorage.setItem(
+        "aulo.composer.v1",
+        JSON.stringify({ style: "lofi", lyrics: "Morning light" }),
+      );
+      vi.mocked(songs.creationStatus).mockResolvedValue({
+        ready: false,
+        blocker: "models",
+        message: "Finish preparing the music models to start creating.",
+      });
+      render(<App />);
+      expect(
+        await screen.findByText(
+          "Finish preparing the music models to start creating.",
+        ),
+      ).toBeVisible();
+      const create = screen.getByRole("button", { name: "Create song" });
+      expect(create).toBeDisabled();
+      vi.mocked(songs.creationStatus).mockResolvedValue({
+        ready: true,
+        blocker: "ready",
+        message: "Ready to create.",
+      });
+      await vi.advanceTimersByTimeAsync(4_500);
+      await waitFor(() => expect(create).toBeEnabled());
+      expect(
+        screen.queryByText(
+          "Finish preparing the music models to start creating.",
+        ),
+      ).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("library", () => {
   it("shows plain progress, stops a running song, and offers the song menu", async () => {
     vi.mocked(songs.listSongs).mockResolvedValue([

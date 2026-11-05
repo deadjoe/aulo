@@ -66,7 +66,9 @@ export const EMPTY_COLLECTIONS: Collections = {
 };
 export interface CreationStatus {
   ready: boolean;
-  blocker: "models" | "engine" | "unsupported" | "ready" | "preview";
+  /** "engine": still starting (tried again); "damaged": Aulo must be installed again. */
+  blocker:
+    "models" | "engine" | "damaged" | "unsupported" | "ready" | "preview";
   message: string;
   /** About how long a song can be on this computer. */
   maxSongSeconds?: number;

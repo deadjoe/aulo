@@ -193,14 +193,23 @@ export default function App() {
     window.addEventListener("focus", refreshStatus);
     return () => window.removeEventListener("focus", refreshStatus);
   }, [explored, refreshStatus]);
-  // An engine that could not start is looked at again after a while, so a slow
-  // first start on a fresh computer clears up without reopening Aulo.
-  const engineBlocked = status?.ready === false && status.blocker === "engine";
+  // What still stands in the way is looked at again on its own: music models that
+  // finish downloading in the background (often while the person waits in this
+  // window, so no focus change tells us) and an engine whose first start on a fresh
+  // computer was slow. Neither needs reopening Aulo or switching windows.
+  const waitingFor =
+    status?.ready === false &&
+    (status.blocker === "models" || status.blocker === "engine")
+      ? status.blocker
+      : null;
   useEffect(() => {
-    if (!explored || !engineBlocked) return;
-    const timer = setInterval(refreshStatus, 65_000);
+    if (!explored || !waitingFor) return;
+    const timer = setInterval(
+      refreshStatus,
+      waitingFor === "models" ? 4_000 : 65_000,
+    );
     return () => clearInterval(timer);
-  }, [explored, engineBlocked, refreshStatus]);
+  }, [explored, waitingFor, refreshStatus]);
 
   useEffect(() => saveComposer(request), [request]);
 
@@ -888,7 +897,11 @@ export default function App() {
       {modal?.kind === "settings" && (
         <SettingsPanel
           songs={allSongs}
-          onClose={() => setModal(null)}
+          onClose={() => {
+            setModal(null);
+            // Settings can download, check or remove the music models.
+            refreshStatus();
+          }}
           onDeleted={remove}
           onSettingsChanged={setSettings}
           notify={notify}
