@@ -645,3 +645,10 @@ fn every_reason_aulo_accepts_is_one_the_engine_sends_and_explained() {
         failure_message("engine_damaged")
     );
 }
+
+#[test]
+fn a_slow_engine_start_is_not_a_damaged_install_or_an_unsupported_computer() {
+    assert_eq!(creation_blocker("unavailable"), "engine");
+    assert_eq!(creation_blocker("not_installed"), "damaged");
+    assert_eq!(creation_blocker("unsupported"), "unsupported");
+}

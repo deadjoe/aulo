@@ -125,6 +125,8 @@ export default function ModelsPanel() {
       status?.phase === "unverified") &&
     status.operation === "verify" &&
     !!status.modelRoot;
+  // The models being checked are Aulo's own download, not a folder the person chose.
+  const ownDownload = !!plan && status?.modelRoot === plan.destination;
   const downloading = status?.operation === "download";
   const pace =
     status?.phase === "downloading"
@@ -238,8 +240,17 @@ export default function ModelsPanel() {
               Check the music models
             </button>
           )}
-          {!active && !verified && plan && !retryVerify && (
+          {/* Also after a failed check: downloading again replaces only the files that
+              are missing or damaged, and is the way back when a chosen folder is gone. */}
+          {!active && !verified && plan && (
             <div className="download-consent">
+              {retryVerify && (
+                <p className="helper">
+                  {ownDownload
+                    ? "If checking doesn’t help, download them again. Aulo keeps the files that are fine and replaces the rest."
+                    : "If that folder is gone, Aulo can download its own copy instead."}
+                </p>
+              )}
               <dl>
                 <div>
                   <dt>Download size</dt>
@@ -277,17 +288,22 @@ export default function ModelsPanel() {
                 </p>
               )}
               <button
-                className="primary"
+                className={retryVerify ? "secondary" : "primary"}
                 disabled={!accepted || pending || shortOfSpace}
                 onClick={() => void action(() => downloadModels(accepted))}
               >
                 <Download size={16} />
-                {status?.phase === "paused" && status.operation === "download"
-                  ? "Resume download"
-                  : status?.phase === "failed" &&
+                {retryVerify
+                  ? ownDownload
+                    ? "Download them again"
+                    : "Download Aulo’s own copy"
+                  : status?.phase === "paused" &&
                       status.operation === "download"
-                    ? "Try again"
-                    : "Download music models"}
+                    ? "Resume download"
+                    : status?.phase === "failed" &&
+                        status.operation === "download"
+                      ? "Try again"
+                      : "Download music models"}
               </button>
               <details className="storage-details">
                 <summary>Where they’re saved</summary>
@@ -364,19 +380,32 @@ export default function ModelsPanel() {
   );
 }
 
-/** Only speaks up when the music engine itself needs attention. */
+/**
+ * Only speaks up when part of Aulo is missing, and keeps looking: a note read once
+ * would stay on screen after the engine is fine. An engine that is still starting
+ * is not mentioned here; the setup step and the create panel already say so.
+ */
 function EngineNote() {
   const [message, setMessage] = useState<string | null>(null);
   useEffect(() => {
     let active = true;
-    inspectEngine().then(
-      (status) => {
-        if (active && !status.generationReady) setMessage(status.message);
-      },
-      () => undefined,
-    );
+    let timer: ReturnType<typeof setTimeout>;
+    const look = () =>
+      inspectEngine().then(
+        (status) => {
+          if (!active) return;
+          setMessage(status.state === "not_installed" ? status.message : null);
+          if (status.generationReady) return;
+          timer = setTimeout(look, 10_000);
+        },
+        () => {
+          if (active) timer = setTimeout(look, 10_000);
+        },
+      );
+    void look();
     return () => {
       active = false;
+      clearTimeout(timer);
     };
   }, []);
   return message ? (

@@ -6,6 +6,7 @@ import userEvent from "@testing-library/user-event";
 import ModelsPanel from "./ModelsPanel";
 import * as models from "../lib/models";
 import { chooseModelFolder } from "../lib/hardware";
+import { inspectEngine, type EngineStatus } from "../lib/core";
 vi.mock("../lib/models", async (original) => ({
   ...(await original<typeof import("../lib/models")>()),
   desktopModelsAvailable: vi.fn(() => true),
@@ -18,6 +19,18 @@ vi.mock("../lib/models", async (original) => ({
   openModelLicense: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("../lib/hardware", () => ({ chooseModelFolder: vi.fn() }));
+vi.mock("../lib/core", () => ({ inspectEngine: vi.fn() }));
+const engine = (
+  state: EngineStatus["state"],
+  message: string,
+): EngineStatus => ({
+  state,
+  message,
+  generationReady: state === "ready",
+  engineVersion: null,
+  device: null,
+  backend: null,
+});
 const plan: models.ModelPlan = {
   label: "Music models",
   totalBytes: 7794565436,
@@ -46,6 +59,9 @@ beforeEach(() => {
   vi.mocked(models.getModelStatus).mockResolvedValue(initial);
   vi.mocked(chooseModelFolder).mockResolvedValue("/existing/models");
   vi.mocked(models.replacedBytes).mockResolvedValue(0);
+  vi.mocked(inspectEngine).mockResolvedValue(
+    engine("unavailable", "The music engine could not start."),
+  );
 });
 afterEach(cleanup);
 describe("native model preparation", () => {
@@ -64,9 +80,6 @@ describe("native model preparation", () => {
     await user.click(screen.getByRole("checkbox"));
     await user.click(download);
     expect(models.downloadModels).toHaveBeenCalledWith(true);
-    expect(
-      await screen.findByText(/Open the desktop app to check the music engine/),
-    ).toBeVisible();
   });
   it("does not start a download when free space is insufficient", async () => {
     vi.mocked(models.getModelPlan).mockResolvedValue({
@@ -100,9 +113,6 @@ describe("native model preparation", () => {
     );
     expect(models.verifyModels).toHaveBeenCalledWith("/existing/models");
     expect(await screen.findByText("Ready")).toBeVisible();
-    expect(
-      screen.getByText(/Open the desktop app to check the music engine/),
-    ).toBeVisible();
   });
   it("keeps model import errors actionable and retries verification rather than downloading", async () => {
     vi.mocked(models.getModelStatus).mockResolvedValue({
@@ -210,5 +220,60 @@ describe("native model preparation", () => {
     expect(
       screen.queryByRole("button", { name: /Already have the music models/ }),
     ).not.toBeInTheDocument();
+  });
+  it("offers a fresh download when checking Aulo's own download fails", async () => {
+    vi.mocked(models.getModelStatus).mockResolvedValue({
+      ...initial,
+      phase: "failed",
+      operation: "verify",
+      modelRoot: plan.destination,
+      message: "Some music model files are missing.",
+    });
+    const user = userEvent.setup();
+    render(<ModelsPanel />);
+    expect(
+      await screen.findByRole("button", { name: "Check the music models" }),
+    ).toBeVisible();
+    const again = screen.getByRole("button", { name: /Download them again/ });
+    expect(again).toBeDisabled();
+    await user.click(screen.getByRole("checkbox"));
+    await user.click(again);
+    expect(models.downloadModels).toHaveBeenCalledWith(true);
+  });
+  it("offers Aulo's own copy when a chosen folder can no longer be checked", async () => {
+    vi.mocked(models.getModelStatus).mockResolvedValue({
+      ...initial,
+      phase: "unverified",
+      operation: "verify",
+      modelRoot: "/Volumes/Gone/models",
+      message: "Aulo needs to check the music models again before using them.",
+    });
+    render(<ModelsPanel />);
+    expect(
+      await screen.findByRole("button", { name: /Download Aulo’s own copy/ }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Check the music models" }),
+    ).toBeVisible();
+  });
+  it("names a damaged install but not an engine that is still starting", async () => {
+    render(<ModelsPanel />);
+    await screen.findByRole("button", { name: "Download music models" });
+    expect(
+      screen.queryByText("The music engine could not start."),
+    ).not.toBeInTheDocument();
+    cleanup();
+    vi.mocked(inspectEngine).mockResolvedValue(
+      engine(
+        "not_installed",
+        "Part of Aulo is missing. Reinstall Aulo to fix it.",
+      ),
+    );
+    render(<ModelsPanel />);
+    expect(
+      await screen.findByText(
+        "Part of Aulo is missing. Reinstall Aulo to fix it.",
+      ),
+    ).toBeVisible();
   });
 });

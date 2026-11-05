@@ -821,7 +821,7 @@ fn verify_existing(root: &Path, m: &Manifest, manager: &ModelManager) -> Result<
         );
         manager.update(|s| s.current_file = Some(file.path.clone()));
         if !verify_file(&root.join(&file.path), file, manager, completed)? {
-            return Err("Some files in this folder are missing or aren’t the versions Aulo needs. Choose another folder, or let Aulo download its own copy.".into());
+            return Err("Some music model files are missing or aren’t the versions Aulo needs. Download them again, or choose a folder that has them.".into());
         }
         completed += file.bytes;
     }

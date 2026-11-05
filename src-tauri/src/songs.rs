@@ -823,12 +823,21 @@ pub fn generate_command(
 #[serde(rename_all = "camelCase")]
 pub struct CreationStatus {
     pub ready: bool,
-    /// models | engine | unsupported | ready
+    /// models | engine | damaged | unsupported | ready
     pub blocker: &'static str,
     pub message: String,
     /// About how long a song can be on this computer, when it can make songs.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_song_seconds: Option<u32>,
+}
+
+/// Why creating waits on the music engine, from the engine's own state.
+pub fn creation_blocker(engine_state: &str) -> &'static str {
+    match engine_state {
+        "unsupported" => "unsupported",
+        "not_installed" => "damaged",
+        _ => "engine",
+    }
 }
 
 #[tauri::command]
@@ -856,11 +865,9 @@ pub async fn creation_status(app: tauri::AppHandle) -> Result<CreationStatus, St
     } else if !engine.generation_ready {
         CreationStatus {
             ready: false,
-            blocker: if engine.state == "unsupported" {
-                "unsupported"
-            } else {
-                "engine"
-            },
+            // "engine" is a start that may still succeed (it is tried again); "damaged"
+            // needs Aulo installed again; "unsupported" is this computer.
+            blocker: creation_blocker(engine.state),
             message: engine.message.into(),
             max_song_seconds: None,
         }

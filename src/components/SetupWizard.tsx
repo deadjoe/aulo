@@ -108,22 +108,27 @@ export default function SetupWizard({
   }, [step, modelsReady]);
   const canCreate = modelsReady && creation?.ready === true;
   const unsupported = creation?.blocker === "unsupported";
-  const blocked =
-    unsupported ||
-    (modelsReady && creation?.ready === false && creation.blocker !== "models");
+  // Part of Aulo is missing: installing it again is the fix, not this computer.
+  const damaged = creation?.blocker === "damaged";
+  const blocked = unsupported || damaged;
+  // The engine is still starting. A first start on a new computer can be slow, and
+  // it is tried again on its own; this is never a reason to give up on the computer.
+  const starting = modelsReady && creation?.blocker === "engine";
   const finalTitle = canCreate
     ? "You’re all set"
-    : blocked
-      ? "Aulo can’t make songs here yet"
-      : modelsReady
-        ? "Getting ready…"
-        : "Get the music models";
+    : damaged
+      ? "Part of Aulo is missing"
+      : blocked
+        ? "Aulo can’t make songs here yet"
+        : modelsReady
+          ? "Getting ready…"
+          : "Get the music models";
   const finalLead = canCreate
     ? "The music models are ready. Time to make your first song."
-    : unsupported
+    : blocked
       ? `${creation?.message} You can still look around.`
-      : blocked
-        ? "The music models are ready, but this computer can’t make songs with Aulo yet. You can still look around."
+      : starting
+        ? "The music models are ready. Aulo is starting its music engine, which can take a few minutes the first time on a new computer. This page moves on by itself."
         : modelsReady
           ? "The music models are ready. Aulo is checking that it can make music on this computer."
           : "Aulo needs its music models once to make songs. They stay on this computer.";
