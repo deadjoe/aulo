@@ -255,25 +255,40 @@ static QUIT_CONFIRMED: std::sync::atomic::AtomicBool = std::sync::atomic::Atomic
 /// The question is on screen; a second close must not ask twice.
 static QUIT_ASKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Quitting stops the song being made and loses it, so ask first. True when Aulo asked
-/// and the quit must wait for the answer.
+/// Quitting stops the song being made and loses it, or pauses the models' download,
+/// so ask first. True when Aulo asked and the quit must wait for the answer.
 fn ask_before_quitting(app: &tauri::AppHandle) -> bool {
     use std::sync::atomic::Ordering;
     use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
-    if QUIT_CONFIRMED.load(Ordering::SeqCst) || !app.state::<songs::SongService>().making_songs() {
+    if QUIT_CONFIRMED.load(Ordering::SeqCst) {
         return false;
     }
+    let (title, message, stay) = if app.state::<songs::SongService>().making_songs() {
+        (
+            "Quit while a song is being made?",
+            "If you quit now, the song being made stops and is lost.",
+            "Keep making",
+        )
+    } else if models::downloading(&app.state::<models::ModelManager>()) {
+        (
+            "Quit while the music models download?",
+            "What’s downloaded so far is kept, and the download picks up where it left off the next time you open Aulo.",
+            "Keep downloading",
+        )
+    } else {
+        return false;
+    };
     if QUIT_ASKED.swap(true, Ordering::SeqCst) {
         return true;
     }
     let handle = app.clone();
     app.dialog()
-        .message("If you quit now, the song being made stops and is lost.")
-        .title("Quit while a song is being made?")
+        .message(message)
+        .title(title)
         .kind(MessageDialogKind::Warning)
         .buttons(MessageDialogButtons::OkCancelCustom(
             "Quit".into(),
-            "Keep making".into(),
+            stay.into(),
         ))
         .show(move |quit| {
             QUIT_ASKED.store(false, Ordering::SeqCst);
@@ -352,6 +367,13 @@ pub fn run() {
             version::app_version,
             support::save_report
         ])
+        .setup(|app| {
+            // A download the last run did not finish continues by itself. Off the main
+            // thread: finding this computer's plan can take a few seconds on Windows.
+            let handle = app.handle().clone();
+            std::thread::spawn(move || models::resume_unfinished(&handle));
+            Ok(())
+        })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 if ask_before_quitting(window.app_handle()) {

@@ -35,9 +35,11 @@ impl EngineProcess {
         protocol: u32,
         timeout: Duration,
     ) -> Result<Self, String> {
+        group(&mut command);
         let mut child = command
             .spawn()
             .map_err(|_| "The music engine could not start.".to_string())?;
+        contain(&child);
         let stdout = child.stdout.take().ok_or("Missing engine output")?;
         let stdin = child.stdin.take().ok_or("Missing engine input")?;
         let (sender, events) = mpsc::channel();
@@ -106,7 +108,9 @@ impl EngineProcess {
         let deadline = Instant::now() + grace;
         while Instant::now() < deadline {
             if !self.alive() {
-                let _ = self.child.held().wait();
+                let mut child = self.child.held();
+                let _ = child.wait();
+                release(&child);
                 return;
             }
             std::thread::sleep(Duration::from_millis(100));
@@ -115,9 +119,134 @@ impl EngineProcess {
     }
 
     pub fn kill(&self) {
-        let mut child = self.child.held();
-        let _ = child.kill();
-        let _ = child.wait();
+        kill_tree(&mut self.child.held());
+    }
+}
+
+// GROOVE's GGUF engine runs yue2.cpp as processes of its own (yue-synth, yue-plan,
+// neural-codec). Stopping only the Python process would leave them running on the
+// graphics card, so the engine and everything it starts are kept and stopped together.
+
+/// Before spawning: on macOS, the engine leads a process group its children join.
+pub fn group(command: &mut Command) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    #[cfg(not(unix))]
+    let _ = command;
+}
+
+/// After spawning: on Windows, a job that the system ends with everything in it when
+/// Aulo closes its handle, which also happens when Aulo crashes or is force-quit.
+/// (On macOS the engine notices Aulo is gone and stops by itself; see bridge.py.)
+pub fn contain(child: &Child) {
+    #[cfg(windows)]
+    jobs::assign(child);
+    #[cfg(not(windows))]
+    let _ = child;
+}
+
+/// Stop the engine and every process it started, and reap it.
+pub fn kill_tree(child: &mut Child) {
+    #[cfg(unix)]
+    {
+        // The group outlives its leader while any member is left, and its id is not
+        // handed to a new process meanwhile, so this reaches only the engine's own.
+        if let Ok(group) = i32::try_from(child.id()) {
+            // SAFETY: a plain signal to a process group; no memory is shared.
+            unsafe { libc::killpg(group, libc::SIGKILL) };
+        }
+    }
+    #[cfg(windows)]
+    jobs::end(child.id());
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// The engine left by itself: end anything it left behind.
+pub fn release(child: &Child) {
+    #[cfg(windows)]
+    jobs::end(child.id());
+    #[cfg(not(windows))]
+    let _ = child;
+}
+
+#[cfg(windows)]
+mod jobs {
+    use std::{os::windows::io::AsRawHandle, process::Child, sync::Mutex};
+    use windows::{
+        core::PCWSTR,
+        Win32::{
+            Foundation::{CloseHandle, HANDLE},
+            System::JobObjects::{
+                AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+                SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+                JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+            },
+        },
+    };
+
+    /// A job set to end its processes once its last handle closes.
+    struct Job(HANDLE);
+    // SAFETY: a job handle may be used and closed from any thread.
+    unsafe impl Send for Job {}
+    impl Drop for Job {
+        fn drop(&mut self) {
+            // SAFETY: the handle is owned here and closed exactly once.
+            unsafe {
+                let _ = TerminateJobObject(self.0, 1);
+                let _ = CloseHandle(self.0);
+            }
+        }
+    }
+
+    /// Jobs by engine process id. Never dropped while Aulo runs; when Aulo ends, the
+    /// system closes the handles and the jobs end their processes.
+    static JOBS: Mutex<Vec<(u32, Job)>> = Mutex::new(Vec::new());
+
+    fn create() -> Option<Job> {
+        // SAFETY: plain system calls; `info` outlives the call that reads it.
+        unsafe {
+            let job = Job(CreateJobObjectW(None, PCWSTR::null()).ok()?);
+            let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            SetInformationJobObject(
+                job.0,
+                JobObjectExtendedLimitInformation,
+                &info as *const _ as *const core::ffi::c_void,
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            )
+            .ok()?;
+            Some(job)
+        }
+    }
+
+    pub fn assign(child: &Child) {
+        let Some(job) = create() else { return };
+        let process = HANDLE(child.as_raw_handle());
+        // SAFETY: both handles are open for the length of the call.
+        if unsafe { AssignProcessToJobObject(job.0, process) }.is_ok() {
+            let mut jobs = JOBS
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            jobs.retain(|(id, _)| *id != child.id());
+            jobs.push((child.id(), job));
+        }
+    }
+
+    /// End the job of this engine process, and everything still in it.
+    pub fn end(id: u32) {
+        let job = {
+            let mut jobs = JOBS
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            jobs.iter()
+                .position(|(owner, _)| *owner == id)
+                .map(|index| jobs.swap_remove(index))
+        };
+        drop(job);
     }
 }
 
@@ -177,5 +306,54 @@ impl Drop for KeepAwake {
             let _ = child.kill();
             let _ = child.wait();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Stdio;
+
+    /// Starts a process that starts a second, long-lived one; both hold the output open,
+    /// so the output ends only once both are gone.
+    fn engine_with_a_child() -> Command {
+        #[cfg(unix)]
+        let mut command = {
+            let mut command = Command::new("/bin/sh");
+            command.args(["-c", "sleep 60 & sleep 60"]);
+            command
+        };
+        #[cfg(windows)]
+        let mut command = {
+            let mut command = Command::new("cmd");
+            command.args([
+                "/C",
+                "start /B ping -n 60 127.0.0.1 >NUL & ping -n 60 127.0.0.1 >NUL",
+            ]);
+            command
+        };
+        command.stdin(Stdio::null()).stdout(Stdio::piped());
+        command
+    }
+
+    #[test]
+    fn stopping_the_engine_stops_what_it_started() {
+        let mut command = engine_with_a_child();
+        group(&mut command);
+        let mut child = command.spawn().unwrap();
+        contain(&child);
+        let mut output = child.stdout.take().unwrap();
+        // Let the second process start before the engine is stopped.
+        std::thread::sleep(Duration::from_millis(500));
+        let (done, ended) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = std::io::copy(&mut output, &mut std::io::sink());
+            let _ = done.send(());
+        });
+        kill_tree(&mut child);
+        assert!(
+            ended.recv_timeout(Duration::from_secs(10)).is_ok(),
+            "a process the engine started is still running"
+        );
     }
 }

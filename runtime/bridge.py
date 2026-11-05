@@ -419,6 +419,9 @@ class Commands:
         # Cancels for songs not started yet: a cancel can overtake its own generate.
         self.pending_cancels = set()
         self.cancel = threading.Event()
+        # Aulo's end of the pipe is gone: it quit, crashed or was force-quit. No one will
+        # hear about the song any more, so stop it now and give the computer back.
+        self.closed = False
         self.lock = threading.Lock()
         self.thread = threading.Thread(target=self.read, args=(stream,), daemon=True)
 
@@ -454,13 +457,16 @@ class Commands:
                     continue
                 self.queue.put((operation, command))
         finally:
+            with self.lock:
+                self.closed = True
+                self.cancel.set()
             self.queue.put(("shutdown", None))
 
     def begin(self, work_id):
         with self.lock:
             self.current = work_id
             self.cancel.clear()
-            if work_id in self.pending_cancels:
+            if self.closed or work_id in self.pending_cancels:
                 self.pending_cancels.discard(work_id)
                 self.cancel.set()
 

@@ -535,8 +535,51 @@ pub fn open_model_license(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn pause_models(manager: tauri::State<ModelManager>) {
+pub fn pause_models(app: tauri::AppHandle, manager: tauri::State<ModelManager>) {
     manager.0.pause.store(true, Ordering::SeqCst);
+    // Paused on purpose: it stays paused until the person resumes it.
+    if let Ok(base) = base_path(&app) {
+        forget_download(&base);
+    }
+}
+
+/// Present while a download the person started has not finished: Aulo quit, crashed or
+/// lost the connection meanwhile. The next start picks it up by itself.
+const RESUME: &str = "download-unfinished";
+
+fn remember_download(base: &Path) {
+    let _ = fs::create_dir_all(base).and_then(|_| fs::write(base.join(RESUME), b""));
+}
+fn forget_download(base: &Path) {
+    let _ = fs::remove_file(base.join(RESUME));
+}
+/// Whether the download should pick up by itself on this start: the person started it,
+/// did not pause it, and it is neither finished nor replaced by a folder they chose.
+fn resumes_by_itself(base: &Path, m: &Manifest) -> bool {
+    base.join(RESUME).exists() && restore_status(base, m).phase == "paused"
+}
+
+/// At start: continue a download that Aulo's last run did not finish.
+pub fn resume_unfinished(app: &tauri::AppHandle) {
+    let (Ok(base), Ok(m)) = (base_path(app), manifest()) else {
+        return;
+    };
+    if !resumes_by_itself(&base, &m) {
+        forget_download(&base);
+        return;
+    }
+    let _ = start_download(app, &app.state::<ModelManager>());
+}
+
+/// Whether the music models are being downloaded right now (quitting asks first).
+pub fn downloading(manager: &ModelManager) -> bool {
+    manager.0.busy.load(Ordering::SeqCst)
+        && manager
+            .0
+            .status
+            .held()
+            .as_ref()
+            .is_some_and(|s| s.operation.as_deref() == Some("download"))
 }
 
 fn finish(manager: &ModelManager, result: Result<(), String>) {
@@ -566,16 +609,26 @@ pub fn download_models(
     if !terms_accepted {
         return Err("Agree to the music models’ license first.".into());
     }
+    start_download(&app, &manager)?;
+    if let Ok(base) = base_path(&app) {
+        remember_download(&base);
+    }
+    Ok(())
+}
+
+fn start_download(app: &tauri::AppHandle, manager: &ModelManager) -> Result<(), String> {
     let m = manifest()?;
-    let base = base_path(&app)?;
+    let base = base_path(app)?;
     let root = managed_root(&base, &m);
     ensure_not_symlink(&base)?;
     ensure_not_symlink(&root)?;
     manager.begin(&root, m.total())?;
     manager.update(|s| s.operation = Some("download".into()));
-    let manager = manager.inner().clone();
+    let manager = manager.clone();
     std::thread::spawn(move || {
         let _guard = BusyGuard(manager.clone());
+        // Hours on a slow connection: the computer must not fall asleep meanwhile.
+        let _awake = crate::runner::KeepAwake::start();
         let result = (|| {
             let _lock = lock_storage(&base)?;
             adopt_previous(&base, &root, &m)?;
@@ -589,6 +642,7 @@ pub fn download_models(
                 .map_err(|e| e.to_string())?;
             prepare_downloads(&client, &root, &m, &manager)?;
             save_verified(&base, &root, &m)?;
+            forget_download(&base);
             manager.phase("verified", "Music models are ready.");
             manager.update(|s| {
                 s.models_verified = true;
@@ -623,6 +677,7 @@ pub fn remove_model_files(base: &Path) -> Result<Option<PathBuf>, String> {
         "Aulo couldn’t remove the music models. Close other apps using them and try again."
             .to_string()
     })?;
+    forget_download(base);
     match fs::remove_file(base.join("models.json")) {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
             return Err("Aulo couldn’t finish removing the music models. Try again.".into())
@@ -800,6 +855,8 @@ pub async fn verify_models(
             songs.unload_engine()?;
             remove_managed_except(&base, &root)?;
             save_verified(&base, &root, &m)?;
+            // Aulo's own download, if one was under way, is no longer wanted.
+            forget_download(&base);
             manager.phase("verified", "Your music models are ready.");
             manager.update(|s| {
                 s.models_verified = true;
@@ -900,7 +957,7 @@ fn prepare_downloads(
             );
         }
         if offset < file.bytes {
-            transfer(client, file, &partial, manager, complete)?;
+            transfer(client, file, &partial, manager, complete, PATIENCE)?;
         }
         manager.phase("verifying", "Checking the download…");
         if !verify_file(&partial, file, manager, complete)? {
@@ -920,6 +977,32 @@ fn prepare_downloads(
     Ok(())
 }
 
+/// How long a download keeps trying while nothing arrives, and the first wait between
+/// tries. A computer waking from sleep, or changing Wi-Fi, needs a while to get back
+/// online; a few quick tries would give up before it does.
+#[derive(Clone, Copy)]
+struct Patience {
+    window: Duration,
+    first_wait: Duration,
+}
+const PATIENCE: Patience = Patience {
+    window: Duration::from_secs(5 * 60),
+    first_wait: Duration::from_secs(1),
+};
+/// The longest wait between two tries.
+const LONGEST_WAIT: Duration = Duration::from_secs(30);
+
+/// Why one range did not arrive: the connection, which is worth trying again, or
+/// something trying again cannot fix (the disk, a pause).
+#[derive(Debug)]
+enum RangeError {
+    Connection(String),
+    Stop(String),
+}
+fn disk_error(e: std::io::Error) -> RangeError {
+    RangeError::Stop(io_error(e))
+}
+
 // Bounded ranges keep pause responsive and avoid a multi-hour request timeout.
 // A server ignoring Range is handled as a full response after truncating partial data.
 fn transfer(
@@ -928,9 +1011,12 @@ fn transfer(
     partial: &Path,
     manager: &ModelManager,
     base: u64,
+    patience: Patience,
 ) -> Result<(), String> {
     let mut offset = fs::metadata(partial).map_or(0, |m| m.len());
-    let mut failures = 0;
+    let mut failures: u32 = 0;
+    // Since when nothing new has arrived, while the connection keeps failing.
+    let mut stalled_since: Option<Instant> = None;
     // Hugging Face answers each request with a redirect to its file servers. The address
     // it redirects to is reused for the next ranges, saving a round trip per 8 MiB; it
     // expires, and then the next request goes through Hugging Face again. Every byte is
@@ -949,26 +1035,41 @@ fn transfer(
             Ok(next) if next > offset => {
                 offset = next;
                 failures = 0;
+                stalled_since = None;
             }
             Ok(_) => return Err("The download stopped making progress. Try again.".into()),
-            Err(error) => {
+            Err(RangeError::Stop(error)) => return Err(error),
+            Err(RangeError::Connection(error)) => {
                 if manager.cancelled() {
                     return Err("Paused".into());
                 }
                 source = None;
                 // A slow or flaky connection that still moves forward is not a failure.
                 let reached = fs::metadata(partial).map_or(0, |m| m.len());
-                failures = if reached > offset { 1 } else { failures + 1 };
-                if failures >= 3 {
+                if reached > offset {
+                    failures = 0;
+                    stalled_since = None;
+                }
+                let since = *stalled_since.get_or_insert_with(Instant::now);
+                if since.elapsed() >= patience.window {
                     return Err(error);
                 }
-                manager.phase("retrying", "The connection dropped. Trying again…");
+                failures += 1;
+                manager.phase(
+                    "retrying",
+                    "Waiting for the internet connection. The download continues by itself.",
+                );
+                // 1 s, 2 s, 4 s … up to 30 s between tries.
+                let wait = patience
+                    .first_wait
+                    .saturating_mul(1 << (failures - 1).min(5))
+                    .min(LONGEST_WAIT);
                 let start = Instant::now();
-                while start.elapsed() < Duration::from_secs(failures) {
+                while start.elapsed() < wait {
                     if manager.cancelled() {
                         return Err("Paused".into());
                     }
-                    std::thread::sleep(Duration::from_millis(100));
+                    std::thread::sleep(Duration::from_millis(100).min(wait));
                 }
                 offset = fs::metadata(partial).map_or(0, |m| m.len());
             }
@@ -987,7 +1088,7 @@ fn transfer_range(
     base: u64,
     offset: u64,
     source: &mut Option<reqwest::Url>,
-) -> Result<u64, String> {
+) -> Result<u64, RangeError> {
     transfer_range_sized(
         client,
         file,
@@ -1010,7 +1111,8 @@ fn transfer_range_sized(
     offset: u64,
     source: &mut Option<reqwest::Url>,
     range: u64,
-) -> Result<u64, String> {
+) -> Result<u64, RangeError> {
+    use RangeError::{Connection, Stop};
     let end = (offset + range - 1).min(file.bytes - 1);
     let url = source
         .clone()
@@ -1021,8 +1123,10 @@ fn transfer_range_sized(
         .header("Accept-Encoding", "identity")
         .send()
         .map_err(|_| {
-            "Aulo couldn’t reach the download. Check your internet connection and try again."
-                .to_string()
+            Connection(
+                "Aulo couldn’t reach the download. Check your internet connection and try again."
+                    .to_string(),
+            )
         })?;
     let append = if response.status() == StatusCode::PARTIAL_CONTENT {
         let expected = format!("bytes {offset}-{end}/{}", file.bytes);
@@ -1032,20 +1136,22 @@ fn transfer_range_sized(
             .and_then(|h| h.to_str().ok())
             != Some(expected.as_str())
         {
-            return Err("The download was interrupted. Try again.".into());
+            return Err(Connection(
+                "The download was interrupted. Try again.".into(),
+            ));
         }
         true
     } else if response.status() == StatusCode::OK {
         false
     } else {
         *source = None;
-        return Err(format!(
+        return Err(Connection(format!(
             "The download isn’t available right now (error {}). Try again later.",
             response.status().as_u16()
-        ));
+        )));
     };
     if manager.cancelled() {
-        return Err("Paused".into());
+        return Err(Stop("Paused".into()));
     }
     *source = Some(response.url().clone());
     let mut writer = OpenOptions::new()
@@ -1054,31 +1160,35 @@ fn transfer_range_sized(
         .truncate(!append)
         .append(append)
         .open(partial)
-        .map_err(io_error)?;
+        .map_err(disk_error)?;
     let mut received = if append { offset } else { 0 };
     let limit = if append { end + 1 } else { file.bytes };
     let mut buffer = [0u8; 64 * 1024];
     loop {
         if manager.cancelled() {
-            writer.sync_all().map_err(io_error)?;
-            return Err("Paused".into());
+            writer.sync_all().map_err(disk_error)?;
+            return Err(Stop("Paused".into()));
         }
-        let n = response
-            .read(&mut buffer)
-            .map_err(|_| "The connection dropped. What’s downloaded so far is kept.".to_string())?;
+        let n = response.read(&mut buffer).map_err(|_| {
+            Connection("The connection dropped. What’s downloaded so far is kept.".to_string())
+        })?;
         if n == 0 {
             break;
         }
         if received + n as u64 > limit {
-            return Err("The download was interrupted. Try again.".into());
+            return Err(Connection(
+                "The download was interrupted. Try again.".into(),
+            ));
         }
-        writer.write_all(&buffer[..n]).map_err(io_error)?;
+        writer.write_all(&buffer[..n]).map_err(disk_error)?;
         received += n as u64;
         manager.update(|s| s.completed_bytes = base + received);
     }
-    writer.sync_all().map_err(io_error)?;
+    writer.sync_all().map_err(disk_error)?;
     if received != limit {
-        return Err("The download stopped early. What’s downloaded so far is kept.".into());
+        return Err(Connection(
+            "The download stopped early. What’s downloaded so far is kept.".into(),
+        ));
     }
     Ok(received)
 }

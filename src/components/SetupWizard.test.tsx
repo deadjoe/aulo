@@ -4,6 +4,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import SetupWizard from "./SetupWizard";
 import { creationStatus } from "../lib/songs";
+import { getModelStatus, type ModelStatus } from "../lib/models";
 
 vi.mock("./ModelsPanel", () => ({
   default: () => <p>Models panel</p>,
@@ -89,5 +90,35 @@ describe("the last setup step", () => {
     expect(
       screen.queryByRole("button", { name: /Start creating/ }),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("opening Aulo again during setup", () => {
+  const status = (fields: Partial<ModelStatus>) =>
+    ({ modelsVerified: false, ...fields }) as ModelStatus;
+
+  it("opens on the download that picks up by itself, not on Welcome", async () => {
+    vi.mocked(creationStatus).mockResolvedValue({
+      ready: false,
+      blocker: "models",
+      message: "Download the music models first.",
+    });
+    vi.mocked(getModelStatus).mockResolvedValue(
+      status({ operation: "download", phase: "downloading" }),
+    );
+    render(<SetupWizard onExplore={() => undefined} />);
+    expect(await screen.findByText("Models panel")).toBeVisible();
+  });
+
+  it("starts on Welcome the first time", async () => {
+    vi.mocked(getModelStatus).mockResolvedValue(
+      status({ operation: null, phase: "not_started" }),
+    );
+    render(<SetupWizard onExplore={() => undefined} />);
+    await vi.waitFor(() => expect(getModelStatus).toHaveBeenCalled());
+    expect(
+      screen.getByRole("heading", { name: "Make music on your own computer" }),
+    ).toBeVisible();
+    expect(screen.queryByText("Models panel")).not.toBeInTheDocument();
   });
 });

@@ -18,8 +18,12 @@ not_started -> checking -> downloading -> verifying -> verified
 application restart:
   saved verified location, files unchanged -> verified
   saved verified location, files changed   -> unverified -> explicit verification
-  partial managed download -> paused -> explicit resume
+  partial managed download, paused by the person   -> paused -> explicit resume
+  partial managed download, not paused (Aulo quit,
+    crashed, or the connection gave up)            -> resumes by itself
 ```
+
+A download keeps the computer from idle sleep while it runs. When the connection drops it keeps trying, with waits growing from 1 s to 30 s, for up to five minutes without progress; a problem with the disk stops it at once. Quitting during a download asks first; what is downloaded is kept either way.
 
 `modelsVerified` means every file passed its checksum. After a restart, a saved verification stays valid only while every file keeps the size and modification time recorded when it passed; any difference requires a full check again. Verification does not load a model or test inference; engine readiness is checked separately (see [engine](ENGINE.md)).
 

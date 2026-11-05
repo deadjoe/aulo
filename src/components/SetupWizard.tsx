@@ -60,6 +60,20 @@ export default function SetupWizard({
   useEffect(() => {
     if (step === 1) void check();
   }, [step]);
+  // A download from an earlier visit picks up by itself: open on it, not on Welcome.
+  useEffect(() => {
+    if (initialStep !== 0 || !desktopModelsAvailable()) return;
+    let stopped = false;
+    getModelStatus()
+      .then((s) => {
+        if (!stopped && s.operation === "download" && s.phase !== "not_started")
+          setStep((current) => (current === 0 ? 2 : current));
+      })
+      .catch(() => undefined);
+    return () => {
+      stopped = true;
+    };
+  }, [initialStep]);
   // The last step's main action depends on whether the models are ready.
   useEffect(() => {
     if (step !== 2 || !desktopModelsAvailable()) return;

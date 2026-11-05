@@ -2,11 +2,13 @@
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 import types
 import unittest
 from unittest.mock import Mock, patch
@@ -166,9 +168,18 @@ class BridgeTests(unittest.TestCase):
         later = "e" * 32
         lines = [json.dumps(generate_request(BRIDGE.parent)),
                  json.dumps({"operation": "cancel", "workId": WORK_ID})]
-        commands = bridge.Commands(io.BytesIO(("\n".join(lines) + "\n").encode()))
-        commands.start().thread.join(2)
-        self.assertEqual(commands.queue.get_nowait()[0], "generate")
+        # Aulo keeps its end open: a closed pipe would stop every song (tested below).
+        read, write = os.pipe()
+        stream = os.fdopen(read, "rb")
+        # Cleanups run last-first: closing the writer ends the reader, then the stream.
+        self.addCleanup(stream.close)
+        self.addCleanup(os.close, write)
+        os.write(write, ("\n".join(lines) + "\n").encode())
+        commands = bridge.Commands(stream).start()
+        self.assertEqual(commands.queue.get(timeout=2)[0], "generate")
+        deadline = time.monotonic() + 2
+        while not commands.pending_cancels and time.monotonic() < deadline:
+            time.sleep(0.01)
         self.assertFalse(commands.cancel.is_set())
         commands.begin(WORK_ID)
         self.assertTrue(commands.cancel.is_set())
@@ -176,6 +187,23 @@ class BridgeTests(unittest.TestCase):
         commands.begin(later)
         self.assertFalse(commands.cancel.is_set())
         self.assertEqual(commands.pending_cancels, set())
+
+    def test_aulo_going_away_stops_the_song_being_made(self):
+        # Aulo crashed or was force-quit mid-song: its end of the pipe closes.
+        commands = bridge.Commands(io.BytesIO())
+        commands.begin(WORK_ID)
+        self.assertFalse(commands.cancel.is_set())
+        commands.start().thread.join(2)
+        self.assertTrue(commands.cancel.is_set())
+        self.assertEqual(commands.queue.get_nowait(), ("shutdown", None))
+
+    def test_a_song_that_starts_after_aulo_went_away_stops_at_once(self):
+        stream = io.BytesIO((json.dumps(generate_request(BRIDGE.parent)) + "\n").encode())
+        commands = bridge.Commands(stream)
+        commands.start().thread.join(2)
+        self.assertEqual(commands.queue.get_nowait()[0], "generate")
+        commands.begin(WORK_ID)
+        self.assertTrue(commands.cancel.is_set())
 
     def fake_engine(self):
         adapter = Mock()
