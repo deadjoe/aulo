@@ -537,3 +537,129 @@ fn the_file_server_a_download_is_sent_to_is_used_for_the_next_ranges() {
     assert_eq!(join.join().unwrap(), ["/model", "/cdn/model", "/cdn/model"]);
     assert_eq!(fs::read(&part).unwrap(), b"hello world");
 }
+
+/// Answers one request per response, in order, on fresh connections.
+fn servers(responses: Vec<String>) -> (String, thread::JoinHandle<()>) {
+    let socket = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/model", socket.local_addr().unwrap());
+    let join = thread::spawn(move || {
+        for response in responses {
+            let (mut stream, _) = socket.accept().unwrap();
+            let mut request = Vec::new();
+            let mut byte = [0u8; 1];
+            while !request.ends_with(b"\r\n\r\n") {
+                stream.read_exact(&mut byte).unwrap();
+                request.push(byte[0]);
+            }
+            stream.write_all(response.as_bytes()).unwrap();
+        }
+    });
+    (url, join)
+}
+const QUICK: Patience = Patience {
+    window: Duration::from_secs(60),
+    first_wait: Duration::from_millis(5),
+};
+
+#[test]
+fn a_download_keeps_trying_until_the_connection_is_back() {
+    // Waking from sleep: the first tries fail until the computer is online again.
+    let temp = tempfile::tempdir().unwrap();
+    let part = temp.path().join("model.part");
+    fs::write(&part, b"hello").unwrap();
+    let mut f = fixture(b"hello world");
+    let unavailable =
+        "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+    let mut responses = vec![unavailable.to_string(); 6];
+    responses.push("HTTP/1.1 206 Partial Content\r\nContent-Range: bytes 5-10/11\r\nContent-Length: 6\r\nConnection: close\r\n\r\n world".into());
+    let (url, join) = servers(responses);
+    f.url = url;
+    let state = manager(temp.path(), f.bytes);
+    transfer(&client(), &f, &part, &state, 0, QUICK).unwrap();
+    join.join().unwrap();
+    assert_eq!(fs::read(&part).unwrap(), b"hello world");
+}
+
+#[test]
+fn a_download_gives_up_only_after_its_patience_runs_out() {
+    let temp = tempfile::tempdir().unwrap();
+    let part = temp.path().join("model.part");
+    let mut f = fixture(b"hello world");
+    // Nothing listens here.
+    let closed = TcpListener::bind("127.0.0.1:0").unwrap();
+    f.url = format!("http://{}/model", closed.local_addr().unwrap());
+    drop(closed);
+    let state = manager(temp.path(), f.bytes);
+    let patience = Patience {
+        window: Duration::from_millis(300),
+        first_wait: Duration::from_millis(5),
+    };
+    let started = Instant::now();
+    let error = transfer(&client(), &f, &part, &state, 0, patience).unwrap_err();
+    assert!(started.elapsed() >= patience.window);
+    assert!(error.contains("internet connection"), "{error}");
+}
+
+#[test]
+fn a_disk_problem_is_not_waited_out_like_a_connection() {
+    let temp = tempfile::tempdir().unwrap();
+    // The partial file cannot be written: its folder is gone.
+    let part = temp.path().join("gone").join("model.part");
+    let mut f = fixture(b"hello world");
+    let (url, join) = server(
+        "HTTP/1.1 200 OK\r\nContent-Length: 11\r\nConnection: close\r\n\r\nhello world".into(),
+        "range: bytes=0-10",
+    );
+    f.url = url;
+    let state = manager(temp.path(), f.bytes);
+    let started = Instant::now();
+    let error = transfer(&client(), &f, &part, &state, 0, QUICK).unwrap_err();
+    join.join().unwrap();
+    assert!(error.contains("couldn’t save"), "{error}");
+    assert!(started.elapsed() < Duration::from_secs(1));
+}
+
+#[test]
+fn an_unfinished_download_picks_up_by_itself_unless_it_was_paused() {
+    let temp = tempfile::tempdir().unwrap();
+    let base = temp.path();
+    let m = catalog(fixture(b"hello world"));
+    fs::create_dir_all(managed_root(base, &m)).unwrap();
+    // Never started by the person: nothing happens by itself.
+    assert!(!resumes_by_itself(base, &m));
+    remember_download(base);
+    assert!(resumes_by_itself(base, &m));
+    // Paused on purpose, or the models removed: it waits for the person.
+    forget_download(base);
+    assert!(!resumes_by_itself(base, &m));
+    remember_download(base);
+    remove_model_files(base).unwrap();
+    assert!(!base.join(RESUME).exists());
+}
+
+#[test]
+fn finished_models_never_download_again_by_themselves() {
+    let temp = tempfile::tempdir().unwrap();
+    let base = temp.path();
+    let m = catalog(fixture(b"hello world"));
+    let root = managed_root(base, &m);
+    fs::create_dir_all(root.join("YuE2-3B")).unwrap();
+    fs::write(root.join(&m.files[0].path), b"hello world").unwrap();
+    save_verified(base, &root, &m).unwrap();
+    remember_download(base);
+    assert!(!resumes_by_itself(base, &m));
+}
+
+#[test]
+fn quitting_asks_only_while_the_models_download() {
+    let temp = tempfile::tempdir().unwrap();
+    let state = ModelManager::default();
+    assert!(!downloading(&state));
+    state.begin(temp.path(), 11).unwrap();
+    state.update(|s| s.operation = Some("verify".into()));
+    assert!(!downloading(&state));
+    state.update(|s| s.operation = Some("download".into()));
+    assert!(downloading(&state));
+    drop(BusyGuard(state.clone()));
+    assert!(!downloading(&state));
+}

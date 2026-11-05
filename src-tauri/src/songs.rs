@@ -542,9 +542,7 @@ impl SongService {
         };
         self.0 .1.notify_all();
         if let Some(child) = child {
-            let mut child = child.held();
-            let _ = child.kill();
-            let _ = child.wait();
+            crate::runner::kill_tree(&mut child.held());
         }
     }
 
@@ -790,8 +788,7 @@ impl SongService {
                 std::thread::sleep(Duration::from_millis(250));
             }
             if let Some(child) = child {
-                let mut child = child.held();
-                let _ = child.kill();
+                crate::runner::kill_tree(&mut child.held());
             }
         });
     }

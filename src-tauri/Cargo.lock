@@ -214,6 +214,7 @@ dependencies = [
  "claxon",
  "fs2",
  "hound",
+ "libc",
  "lofty",
  "mp3lame-encoder",
  "objc2",

@@ -10,7 +10,7 @@ Implemented:
 
 - Tauri 2 desktop shell with React and TypeScript.
 - First-run welcome, automatic hardware inspection, and music-model setup screens.
-- Pinned official model downloads with byte-level progress, pause/resume, bounded retries, storage checks, and SHA-256 verification. Verified models stay ready across restarts while their files are unchanged.
+- Pinned official model downloads with byte-level progress, pause/resume, automatic resume after a restart, patient retries (up to five minutes offline), no idle sleep while downloading, storage checks, and SHA-256 verification. Verified models stay ready across restarts while their files are unchanged.
 - A Suno-style creation workspace: Simple and Advanced modes, lyrics with section shortcuts, style ideas, voice, weirdness, and style influence. No scores, seeds, engines, or other technical settings are shown.
 - A native song service with a resident engine: the model stays loaded between songs and is released after 10 idle minutes; a queue, stop, a hang watchdog, crash recovery, keep-awake, a question before quitting while a song is being made, one Aulo at a time, and durable works under the application data folder.
 - Suno-style progress: a spinner on the song's cover and "Creating…", with no technical stage names.
